@@ -60,8 +60,8 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Проверяем на наличие недопустимых символов, которые могут вызвать проблемы с base64
-    const invalidChars = cleanToken.match(/[^A-Za-z0-9+/=\-_]/g);
+    // Проверяем на наличие недопустимых символов (добавляем точку как допустимый символ)
+    const invalidChars = cleanToken.match(/[^A-Za-z0-9+/=\-_.]/g);
     if (invalidChars) {
       console.error("❌ Токен содержит недопустимые символы:", invalidChars);
       return NextResponse.json(
@@ -1297,29 +1297,44 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     // Используем ExcelJS для создания листа с рекламными данными
     const excelJSWorkbook = new ExcelJS.Workbook();
     
-    // Переносим существующие листы из XLSX в ExcelJS
+    // Переносим существующие листы из XLSX в ExcelJS с сохранением формул
     const sheetNames = workbook.SheetNames;
     for (const sheetName of sheetNames) {
       const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-      
       const excelJSSheet = excelJSWorkbook.addWorksheet(sheetName);
-      jsonData.forEach((row: any, rowIndex: number) => {
-        if (Array.isArray(row)) {
-          row.forEach((cell: any, colIndex: number) => {
-            const excelCell = excelJSSheet.getCell(rowIndex + 1, colIndex + 1);
-            if (typeof cell === 'object' && cell !== null && 'f' in cell) {
-              // Это формула
+      
+      // Получаем диапазон листа
+      const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
+      
+      // Переносим каждую ячейку с сохранением формул
+      for (let R = range.s.r; R <= range.e.r; ++R) {
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+          const cell = worksheet[cellAddress];
+          
+          if (cell) {
+            const excelCell = excelJSSheet.getCell(R + 1, C + 1);
+            
+            // Проверяем, есть ли формула
+            if (cell.f) {
               excelCell.value = { formula: cell.f };
               if (cell.z) {
                 excelCell.numFmt = cell.z;
               }
-            } else {
-              excelCell.value = cell;
+            } else if (cell.v !== undefined) {
+              excelCell.value = cell.v;
+              if (cell.z) {
+                excelCell.numFmt = cell.z;
+              }
             }
-          });
+          }
         }
-      });
+      }
+      
+      // Копируем ширину колонок
+      if (worksheet['!cols']) {
+        excelJSSheet.columns = worksheet['!cols'].map((col: any) => ({ width: col.wch }));
+      }
     }
     
     // Получаем SKU данные
