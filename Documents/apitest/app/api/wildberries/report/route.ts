@@ -146,6 +146,10 @@ export async function POST(request: NextRequest) {
           headers: {
             "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "Content-Disposition": `attachment; filename="wildberries_full_report_${startDate}_${endDate}.xlsx"`,
+            "Content-Length": buffer.length.toString(),
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
           },
         });
       }
@@ -207,6 +211,10 @@ export async function POST(request: NextRequest) {
           headers: {
             "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "Content-Disposition": `attachment; filename="wildberries_full_report_${startDate}_${endDate}.xlsx"`,
+            "Content-Length": buffer.length.toString(),
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
           },
         });
       }
@@ -282,6 +290,10 @@ export async function POST(request: NextRequest) {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="wildberries_full_report_${startDate}_${endDate}.xlsx"`,
+        "Content-Length": buffer.length.toString(),
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
       },
     });
 
