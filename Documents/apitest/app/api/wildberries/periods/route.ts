@@ -899,26 +899,78 @@ function createProductAnalyticsForWeb(realizationData: any[], storageData: any[]
     const firstItem = items[0];
     const nmId = firstItem.nm_id || '';
     
-    // Подсчитываем основные метрики
-    const deliveries = items.reduce((sum, item) => sum + (item.delivery_amount || 0), 0);
-    const sales = items.filter(item => item.doc_type_name === "Продажа").length;
-    const refunds = items.filter(item => item.doc_type_name === "Возврат").length;
-    const corrections = items.filter(item => item.doc_type_name === "Корректировка").length;
+    // Движение товара в штуках
+    let sales = 0;
+    let refunds = 0;
+    let corrections = 0;
+    let deliveries = 0;
+
+    // Финансовые данные
+    let totalBeforeSPP = 0;
+    let returnsBeforeSPP = 0;
+    let totalAfterSPP = 0;
+    let returnsAfterSPP = 0;
+    let logistics = 0;
+    let storage = 0;
+    let penalties = 0;
+    let additionalPayments = 0;
+    let totalToPayment = 0;
+
+    // Обрабатываем каждую операцию по товару
+    for (const item of items) {
+      const qty = item.quantity || 0;
+      const retail = item.retail_price_withdisc_rub || 0;
+      const toPayment = item.ppvz_for_pay || 0;
+      
+      deliveries += item.delivery_amount || 0;
+      totalToPayment += toPayment;
+      
+      // Определяем тип операции
+      const docType = item.doc_type_name || '';
+      
+      if (docType === 'Продажа') {
+        sales += qty;
+        totalBeforeSPP += retail;
+        totalAfterSPP += retail;
+      } else if (docType === 'Возврат') {
+        refunds += qty;
+        returnsBeforeSPP += retail;
+        returnsAfterSPP += retail;
+      } else if (docType === 'Корректировка') {
+        corrections += qty;
+      }
+      
+      // Суммируем расходы
+      logistics += item.delivery_rub || 0;
+      storage += item.storage_fee || 0;
+      penalties += item.penalty || 0;
+      additionalPayments += item.additional_payment || 0;
+    }
+
+    // Основные расчеты
+    const realizedQuantity = sales - refunds;
+    const commission = totalBeforeSPP - totalToPayment;
+    const refundRate = sales > 0 ? (refunds / sales * 100) : 0;
+    const avgCheckBeforeSPP = sales > 0 ? (totalBeforeSPP / sales) : 0;
+    const avgCheckAfterSPP = sales > 0 ? (totalAfterSPP / sales) : 0;
+    const totalRevenueBeforeSPP = totalBeforeSPP - returnsBeforeSPP;
+    const totalRevenueAfterSPP = totalAfterSPP - returnsAfterSPP;
     
-    // Расчеты сумм
-    const totalBeforeSPP = items.reduce((sum, item) => sum + (item.retail_price_withdisc_rub || 0), 0);
-    const totalAfterSPP = items.reduce((sum, item) => sum + (item.ppvz_for_pay || 0), 0);
-    const logistics = items.reduce((sum, item) => sum + (item.delivery_rub || 0), 0);
-    const storage = items.reduce((sum, item) => sum + (item.storage_fee || 0), 0);
-    const commission = totalBeforeSPP - totalAfterSPP;
-    const penalties = items.reduce((sum, item) => sum + (item.penalty || 0), 0);
+    // Расчеты на единицу
+    const logisticsPerUnit = realizedQuantity > 0 ? (logistics / realizedQuantity) : 0;
+    const paymentPerUnit = realizedQuantity > 0 ? (totalToPayment / realizedQuantity) : 0;
     
-    // Процентные расчеты
-    const refundRate = deliveries > 0 ? (refunds / deliveries * 100) : 0;
-    const marginAmount = totalAfterSPP - logistics - storage - penalties;
-    const marginPercent = totalAfterSPP > 0 ? (marginAmount / totalAfterSPP * 100) : 0;
+    // Процентные показатели
+    const logisticsPercent = totalRevenueBeforeSPP > 0 ? (logistics / totalRevenueBeforeSPP * 100) : 0;
+    const storagePercent = totalRevenueBeforeSPP > 0 ? (storage / totalRevenueBeforeSPP * 100) : 0;
     
-    // Создаем упрощенную строку аналитики для веб-версии
+    // Операционная прибыль
+    const operatingProfit = totalToPayment - logistics - storage - penalties - additionalPayments;
+    const operatingProfitPerUnit = realizedQuantity > 0 ? (operatingProfit / realizedQuantity) : 0;
+    const profitMarginBeforeSPP = totalRevenueBeforeSPP > 0 ? (operatingProfit / totalRevenueBeforeSPP * 100) : 0;
+    const profitMarginAfterSPP = totalRevenueAfterSPP > 0 ? (operatingProfit / totalRevenueAfterSPP * 100) : 0;
+
+    // Создаем расширенную строку аналитики
     const analyticsRow = {
       "Артикул ВБ": nmId,
       "Артикул продавца": vendorCode,
@@ -926,15 +978,43 @@ function createProductAnalyticsForWeb(realizationData: any[], storageData: any[]
       "Продажи": sales,
       "Возвраты": refunds,
       "% возвратов": refundRate.toFixed(2) + '%',
-      "Реализовано": sales - refunds,
-      "Выручка до СПП": totalBeforeSPP.toFixed(2),
-      "Выручка после СПП": totalAfterSPP.toFixed(2),
-      "Комиссия WB": commission.toFixed(2),
-      "Логистика": logistics.toFixed(2),
-      "Хранение": storage.toFixed(2),
+      "Корректировки в продажах": corrections,
+      "Итого кол-во реализованного товара": realizedQuantity,
+      
+      // Движение по цене до СПП
+      "Продажи до СПП": totalBeforeSPP.toFixed(2),
+      "Возвраты до СПП": returnsBeforeSPP.toFixed(2),
+      "Вся стоимость реализованного товара до СПП": totalRevenueBeforeSPP.toFixed(2),
+      "Средний чек продажи до СПП": avgCheckBeforeSPP.toFixed(2),
+      
+      // Движение по цене после СПП
+      "Продажи после СПП": totalAfterSPP.toFixed(2),
+      "Возвраты после СПП": returnsAfterSPP.toFixed(2),
+      "Вся стоимость реализованного товара после СПП": totalRevenueAfterSPP.toFixed(2),
+      "Средний чек продажи после СПП": avgCheckAfterSPP.toFixed(2),
+      
+      // К перечислению
+      "К перечислению за товар": totalToPayment.toFixed(2),
+      
+      // Удержания ВБ
+      "Комиссия": commission.toFixed(2),
+      "Стоимость логистики": logistics.toFixed(2),
+      "Логистика на единицу товара": logisticsPerUnit.toFixed(2),
+      "% логистики от реализации до СПП": logisticsPercent.toFixed(2) + '%',
       "Штрафы": penalties.toFixed(2),
-      "Маржа": marginAmount.toFixed(2),
-      "% маржи": marginPercent.toFixed(2) + '%'
+      "Доплаты": additionalPayments.toFixed(2),
+      "Хранение": storage.toFixed(2),
+      "% хранения от реализации до СПП": storagePercent.toFixed(2) + '%',
+      
+      // Итого к оплате
+      "Итого к оплате": totalToPayment.toFixed(2),
+      "Итого к оплате на единицу товара": paymentPerUnit.toFixed(2),
+      
+      // Операционная прибыль
+      "Операционная прибыль": operatingProfit.toFixed(2),
+      "Операционная прибыль на единицу": operatingProfitPerUnit.toFixed(2),
+      "% прибыли от суммы реализации до СПП": profitMarginBeforeSPP.toFixed(2) + '%',
+      "% прибыли от суммы реализации после СПП": profitMarginAfterSPP.toFixed(2) + '%'
     };
     
     analyticsData.push(analyticsRow);
