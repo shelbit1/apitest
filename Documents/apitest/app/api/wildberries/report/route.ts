@@ -46,8 +46,13 @@ export async function POST(request: NextRequest) {
     console.log(`🌐 Окружение: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🚀 Платформа: ${process.platform}`);
     
+    // Очистка токена от пробелов и лишних символов
+    const cleanToken = token.trim();
+    console.log(`🔍 Токен после очистки: ${cleanToken.substring(0, 20)}...`);
+    console.log(`🔍 Длина очищенного токена: ${cleanToken.length} символов`);
+    
     // Проверка формата токена
-    if (token.length < 10) {
+    if (cleanToken.length < 10) {
       console.error("❌ Токен слишком короткий");
       return NextResponse.json(
         { error: "Некорректный формат токена. Токен должен содержать минимум 10 символов." },
@@ -55,7 +60,19 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Убираем проверку символов - API Wildberries сам валидирует токен
+    // Проверяем на наличие недопустимых символов, которые могут вызвать проблемы с base64
+    const invalidChars = cleanToken.match(/[^A-Za-z0-9+/=\-_]/g);
+    if (invalidChars) {
+      console.error("❌ Токен содержит недопустимые символы:", invalidChars);
+      return NextResponse.json(
+        { 
+          error: "Токен содержит недопустимые символы",
+          help: "Проверьте токен в личном кабинете Wildberries в разделе 'Настройки → Доступ к API'",
+          details: `Найдены недопустимые символы: ${invalidChars.join(', ')}`
+        },
+        { status: 400 }
+      );
+    }
 
     // Валидация дат
     const start = new Date(startDate);
@@ -90,13 +107,13 @@ export async function POST(request: NextRequest) {
     const apiUrl = `https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod?dateFrom=${startDate}&dateTo=${endDate}`;
     
     console.log(`📡 URL запроса реализации: ${apiUrl}`);
-    console.log(`🔑 Начало токена: ${token.substring(0, 30)}...`);
+    console.log(`🔑 Начало токена: ${cleanToken.substring(0, 30)}...`);
     console.log(`⏰ Время запроса: ${new Date().toISOString()}`);
     
     const response = await fetch(apiUrl, {
       method: 'GET',
       headers: {
-        'Authorization': token,
+        'Authorization': cleanToken,
         'User-Agent': 'Mozilla/5.0 (compatible; WB-API-Client/1.0)',
         'Accept': 'application/json',
         'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
@@ -170,13 +187,13 @@ export async function POST(request: NextRequest) {
     // Параллельно получаем данные о хранении, приемке, товарах, платежах и себестоимости
     console.log("📊 2/3 Параллельное получение данных хранения, приемки, товаров, платежей и себестоимости...");
     const [storageData, acceptanceData, productsData, paymentsData, campaigns, financialData, costPriceData] = await Promise.all([
-      getStorageData(token, startDate, endDate),
-      getAcceptanceData(token, startDate, endDate),
-      getProductsData(token),
-      getPaymentsData(token, startDate, endDate),
-      fetchCampaigns(token),
-      fetchFinancialData(token, startDate, endDate),
-      getCostPriceData(token, costPricesData || {})
+      getStorageData(cleanToken, startDate, endDate),
+      getAcceptanceData(cleanToken, startDate, endDate),
+      getProductsData(cleanToken),
+      getPaymentsData(cleanToken, startDate, endDate),
+      fetchCampaigns(cleanToken),
+      fetchFinancialData(cleanToken, startDate, endDate),
+      getCostPriceData(cleanToken, costPricesData || {})
     ]);
 
     console.log(`📦 Итого получено:`);
@@ -195,7 +212,7 @@ export async function POST(request: NextRequest) {
     
     // Создаем Excel файл
     console.log("📊 3/3 Создание Excel отчета...");
-    const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, token);
+    const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, cleanToken);
 
     console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
 
