@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
         userHelp = "Проверьте права токена. Токен должен иметь доступ к статистике.";
       } else if (response.status === 429) {
         errorMessage = "Превышен лимит запросов";
-        userHelp = "Попробуйте позже. Wildberries ограничивает количество запросов в минуту.";
+        userHelp = "Попробуйте позже. Wildberries ограничивает количество запросов в минуту. Рекомендуется подождать 2-3 минуты перед повторной попыткой.";
       } else if (response.status === 400) {
         errorMessage = "Некорректный запрос";
         userHelp = "Проверьте период дат. Максимальный период для отчета - 30 дней.";
@@ -1496,18 +1496,53 @@ async function getAcceptanceData(token: string, startDate: string, endDate: stri
 
     console.log(`📊 Ответ создания задачи приемки: ${taskResponse.status} ${taskResponse.statusText}`);
     
+    let taskId: string | undefined;
+    
     if (!taskResponse.ok) {
       const errorText = await taskResponse.text();
-      console.error(`❌ Ошибка создания задачи приемки: ${errorText}`);
-      return [];
-    }
-
-    const taskResult = await taskResponse.json();
-    const taskId = taskResult.data?.taskId;
-    
-    if (!taskId) {
-      console.error("❌ Не получен taskId для приемки");
-      return [];
+      console.error(`❌ Ошибка создания задачи приемки: ${taskResponse.status}`, errorText);
+      
+      // Проверяем ошибку 429
+      if (taskResponse.status === 429) {
+        console.warn("⚠️ Превышен лимит запросов для приемки (1 запрос в минуту)");
+        console.log("⏳ Ожидание 2 минуты перед повторной попыткой...");
+        
+        // Ждем 2 минуты и повторяем попытку
+        await new Promise(resolve => setTimeout(resolve, 120000));
+        
+        console.log("🔄 Повторная попытка создания задачи приемки...");
+        const retryTaskResponse = await fetch(taskUrl, {
+          method: "GET",
+          headers: {
+            "Authorization": token,
+          },
+        });
+        
+        if (retryTaskResponse.ok) {
+          const retryTaskResult = await retryTaskResponse.json();
+          taskId = retryTaskResult.data?.taskId;
+          
+          if (taskId) {
+            console.log(`✅ Создана задача приемки после повторной попытки: ${taskId}`);
+          } else {
+            console.error("❌ Не удалось получить taskId приемки после повторной попытки");
+            return [];
+          }
+        } else {
+          console.error(`❌ Повторная попытка создания задачи приемки не удалась: ${retryTaskResponse.status}`);
+          return [];
+        }
+      } else {
+        return [];
+      }
+    } else {
+      const taskResult = await taskResponse.json();
+      taskId = taskResult.data?.taskId;
+      
+      if (!taskId) {
+        console.error("❌ Не получен taskId для приемки");
+        return [];
+      }
     }
 
     console.log(`✅ Создана задача приемки: ${taskId}`);
@@ -1606,6 +1641,8 @@ async function getStorageData(token: string, startDate: string, endDate: string)
 
     console.log(`📊 Ответ создания задачи хранения: ${taskResponse.status} ${taskResponse.statusText}`);
 
+    let taskId: string | undefined;
+
     if (!taskResponse.ok) {
       const errorText = await taskResponse.text();
       console.error(`❌ Ошибка создания taskId для хранения: ${taskResponse.status}`, errorText);
@@ -1613,21 +1650,49 @@ async function getStorageData(token: string, startDate: string, endDate: string)
       // Проверяем специфичные ошибки
       if (taskResponse.status === 429) {
         console.warn("⚠️ Превышен лимит запросов (1 запрос в минуту)");
+        console.log("⏳ Ожидание 2 минуты перед повторной попыткой...");
+        
+        // Ждем 2 минуты и повторяем попытку
+        await new Promise(resolve => setTimeout(resolve, 120000));
+        
+        console.log("🔄 Повторная попытка создания taskId...");
+        const retryTaskResponse = await fetch(taskUrl, {
+          method: "GET",
+          headers: {
+            "Authorization": token,
+          },
+        });
+        
+        if (retryTaskResponse.ok) {
+          const retryTaskData = await retryTaskResponse.json();
+          taskId = retryTaskData?.data?.taskId;
+          
+          if (taskId) {
+            console.log(`✅ Создан taskId после повторной попытки: ${taskId}`);
+          } else {
+            console.error("❌ Не удалось получить taskId после повторной попытки");
+            return [];
+          }
+        } else {
+          console.error(`❌ Повторная попытка создания taskId не удалась: ${retryTaskResponse.status}`);
+          return [];
+        }
       } else if (taskResponse.status === 401) {
         console.error("❌ Неверный токен авторизации");
+        return [];
+      } else {
+        return [];
       }
+    } else {
+      const taskData = await taskResponse.json();
+      console.log("📋 Ответ создания задачи:", JSON.stringify(taskData, null, 2));
       
-      return [];
-    }
+      taskId = taskData?.data?.taskId;
 
-    const taskData = await taskResponse.json();
-    console.log("📋 Ответ создания задачи:", JSON.stringify(taskData, null, 2));
-    
-    const taskId = taskData?.data?.taskId;
-
-    if (!taskId) {
-      console.error("❌ Не удалось получить taskId для хранения. Структура ответа:", taskData);
-      return [];
+      if (!taskId) {
+        console.error("❌ Не удалось получить taskId для хранения. Структура ответа:", taskData);
+        return [];
+      }
     }
 
     console.log(`✅ Создан taskId для хранения: ${taskId}`);
@@ -1669,8 +1734,8 @@ async function getStorageData(token: string, startDate: string, endDate: string)
       }
     }
 
-    // Загружаем отчет с повторными попытками
-    const maxRetries = 3;
+    // Загружаем отчет с повторными попытками (увеличено для 429 ошибок)
+    const maxRetries = 5;
     let retryCount = 0;
 
     while (retryCount < maxRetries) {
@@ -1712,8 +1777,14 @@ async function getStorageData(token: string, startDate: string, endDate: string)
         
         return dataArray;
       } else if (downloadResponse.status === 429) {
+        // Экспоненциальная задержка для 429 ошибок
+        const delayMinutes = Math.min(2 ** retryCount, 8); // 2, 4, 8 минут максимум
+        const delayMs = delayMinutes * 60 * 1000;
+        
         console.log(`⚠️ Ошибка 429 для taskId ${taskId}. Попытка ${retryCount + 1} из ${maxRetries}`);
-        await new Promise(resolve => setTimeout(resolve, 60000)); // Ждем 1 минуту
+        console.log(`⏳ Ожидание ${delayMinutes} минут перед повторной попыткой...`);
+        
+        await new Promise(resolve => setTimeout(resolve, delayMs));
         retryCount++;
       } else {
         const errorText = await downloadResponse.text();
