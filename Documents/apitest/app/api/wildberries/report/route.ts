@@ -132,9 +132,13 @@ export async function POST(request: NextRequest) {
         console.log(`  - Финансы кампаний: ${financialData.length} записей`);
         console.log(`  - Себестоимость: ${costPriceData.length} записей`);
 
+        // Создаем аналитические данные по товарам
+        console.log("📊 3/3 Создание аналитических данных по товарам...");
+        const productAnalyticsData = await createProductAnalyticsData(data, storageData, costPriceData, financialData);
+        
         // Создаем Excel файл
         console.log("📊 3/3 Создание Excel отчета...");
-        const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, startDate, endDate, token);
+        const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, token);
         console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
 
         return new NextResponse(buffer, {
@@ -189,9 +193,13 @@ export async function POST(request: NextRequest) {
         console.log(`  - Финансы кампаний: ${financialData.length} записей`);
         console.log(`  - Себестоимость: ${costPriceData.length} записей`);
 
+        // Создаем аналитические данные по товарам
+        console.log("📊 3/3 Создание аналитических данных по товарам...");
+        const productAnalyticsData = await createProductAnalyticsData(data, storageData, costPriceData, financialData);
+        
         // Создаем Excel файл
         console.log("📊 3/3 Создание Excel отчета...");
-        const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, startDate, endDate, token);
+        const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, token);
         console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
 
         return new NextResponse(buffer, {
@@ -259,9 +267,13 @@ export async function POST(request: NextRequest) {
     console.log(`  - Финансы кампаний: ${financialData.length} записей`);
     console.log(`  - Себестоимость: ${costPriceData.length} записей`);
 
+    // Создаем аналитические данные по товарам
+    console.log("📊 3/3 Создание аналитических данных по товарам...");
+    const productAnalyticsData = await createProductAnalyticsData(data, storageData, costPriceData, financialData);
+    
     // Создаем Excel файл
     console.log("📊 3/3 Создание Excel отчета...");
-    const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, startDate, endDate, token);
+    const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, token);
 
     console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
 
@@ -540,7 +552,7 @@ async function fetchCampaignSKUs(apiKey: string, campaignIds: number[]): Promise
   }
 }
 
-async function createExcelReport(data: any[], storageData: any[], acceptanceData: any[], advertData: any[], productsData: any[], paymentsData: any[], campaigns: Campaign[], financialData: FinancialData[], costPriceData: any[], startDate: string, endDate: string, token: string): Promise<Buffer> {
+async function createExcelReport(data: any[], storageData: any[], acceptanceData: any[], advertData: any[], productsData: any[], paymentsData: any[], campaigns: Campaign[], financialData: FinancialData[], costPriceData: any[], productAnalyticsData: any[], startDate: string, endDate: string, token: string): Promise<Buffer> {
   // Подготавливаем данные для Excel
   const excelData = data.map((item) => ({
     "Номер поставки": item.gi_id || "",
@@ -943,6 +955,46 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
 
     XLSX.utils.book_append_sheet(workbook, costPriceSheet, "Себес");
     console.log("🔧 Добавлен отладочный лист 'Себес' (нет данных)");
+  }
+
+  // Добавляем лист с аналитикой по товарам
+  console.log(`Создание листа аналитики по товарам. Количество записей: ${productAnalyticsData?.length || 0}`);
+  
+  if (productAnalyticsData && productAnalyticsData.length > 0) {
+    const productAnalyticsSheet = XLSX.utils.json_to_sheet(productAnalyticsData);
+    
+    // Настройка ширины колонок для аналитики (много столбцов)
+    const analyticsColumnWidths = Array(88).fill({ wch: 15 }); // 88 столбцов как в CSV
+    productAnalyticsSheet['!cols'] = analyticsColumnWidths;
+    
+    XLSX.utils.book_append_sheet(workbook, productAnalyticsSheet, "По товарам");
+    console.log("✅ Лист 'По товарам' добавлен в Excel");
+  } else {
+    // Добавляем лист с отладочной информацией
+    const debugAnalyticsData = [{
+      "Статус": "❌ ДАННЫЕ АНАЛИТИКИ НЕ НАЙДЕНЫ",
+      "Информация": "Нет данных для создания аналитики по товарам",
+      "Возможные причины": "Нет данных реализации | Нет данных о товарах | Пустые артикулы",
+      "Рекомендация": "Проверьте период запроса и наличие данных",
+      "Время запроса": new Date().toISOString(),
+      "Примечание": "Лист создан для отладки"
+    }];
+    
+    const productAnalyticsSheet = XLSX.utils.json_to_sheet(debugAnalyticsData);
+    
+    // Настройка ширины колонок для отладочной информации
+    const debugColumnWidths = [
+      { wch: 30 }, // Статус
+      { wch: 35 }, // Информация
+      { wch: 50 }, // Возможные причины
+      { wch: 30 }, // Рекомендация
+      { wch: 25 }, // Время запроса
+      { wch: 25 }, // Примечание
+    ];
+    productAnalyticsSheet['!cols'] = debugColumnWidths;
+    
+    XLSX.utils.book_append_sheet(workbook, productAnalyticsSheet, "По товарам");
+    console.log("🔧 Добавлен отладочный лист 'По товарам' (нет данных)");
   }
 
   // Добавляем лист с данными о пополнениях
@@ -2041,6 +2093,227 @@ async function getCostPriceData(token: string, savedCostPrices: {[key: string]: 
     console.error('❌ Ошибка при получении данных себестоимости:', error);
     return [];
   }
+}
+
+// Функция для создания аналитических данных по товарам
+async function createProductAnalyticsData(
+  realizationData: any[], 
+  storageData: any[], 
+  costPriceData: any[], 
+  financialData: FinancialData[]
+): Promise<any[]> {
+  console.log("📊 Создание аналитических данных по товарам...");
+  
+  // Группируем данные реализации по артикулу продавца
+  const productGroups = new Map<string, any[]>();
+  
+  for (const item of realizationData) {
+    const vendorCode = item.sa_name || '';
+    if (!productGroups.has(vendorCode)) {
+      productGroups.set(vendorCode, []);
+    }
+    productGroups.get(vendorCode)!.push(item);
+  }
+
+  // Создаем итоговые аналитические строки
+  const analyticsData: any[] = [];
+  
+  for (const [vendorCode, items] of productGroups) {
+    if (!vendorCode) continue; // Пропускаем пустые артикулы
+    
+    // Агрегированные данные по товару
+    const firstItem = items[0];
+    const nmId = firstItem.nm_id || '';
+    
+    // Движение товара в штуках
+    let deliveries = 0;
+    let returns = 0; 
+    let sales = 0;
+    let refunds = 0;
+    let corrections = 0;
+    let totalQuantity = 0;
+
+    // Финансовые данные
+    let totalBeforeSPP = 0;
+    let returnsBeforeSPP = 0;
+    let totalAfterSPP = 0;
+    let returnsAfterSPP = 0;
+    let commission = 0;
+    let logistics = 0;
+    let storage = 0;
+    let advertising = 0;
+    let penalties = 0;
+    let additionalPayments = 0;
+    let totalToPayment = 0;
+
+    // Обрабатываем каждую операцию по товару
+    for (const item of items) {
+      const qty = item.quantity || 0;
+      const amount = item.ppvz_for_pay || 0;
+      const retail = item.retail_price_withdisc_rub || 0;
+      
+      totalQuantity += qty;
+      totalToPayment += amount;
+      
+      // Определяем тип операции
+      const docType = item.doc_type_name || '';
+      const operName = item.supplier_oper_name || '';
+      
+      if (docType === 'Продажа' || operName === 'Продажа') {
+        sales += qty;
+        totalBeforeSPP += retail * qty;
+        totalAfterSPP += retail * qty; // Упрощено, нужно учитывать СПП
+      } else if (docType === 'Возврат' || operName === 'Возврат') {
+        returns += qty;
+        refunds += qty;
+        returnsBeforeSPP += retail * qty;
+        returnsAfterSPP += retail * qty;
+      }
+      
+      // Суммируем комиссии и расходы
+      commission += item.commission_percent || 0;
+      logistics += item.delivery_rub || 0;
+      storage += item.storage_fee || 0;
+      penalties += item.penalty || 0;
+      additionalPayments += item.additional_payment || 0;
+    }
+    
+    // Ищем рекламные расходы по артикулу
+    let adSpend = 0;
+    for (const fin of financialData) {
+      if (fin.sku === nmId || fin.sku === vendorCode) {
+        adSpend += fin.sum || 0;
+      }
+    }
+    
+    // Ищем себестоимость
+    let costPrice = 0;
+    let totalCostPrice = 0;
+    const costItem = costPriceData.find(cost => 
+      cost.vendorCode === vendorCode || cost.nmID === nmId
+    );
+    if (costItem) {
+      costPrice = costItem.costPrice || 0;
+      totalCostPrice = costPrice * Math.abs(sales - refunds); // Себестоимость реализованного товара
+    }
+
+    // Расчеты показателей
+    const refundRate = sales > 0 ? (refunds / sales * 100) : 0;
+    const averagePrice = sales > 0 ? (totalBeforeSPP / sales) : 0;
+    const marginAmount = totalToPayment - totalCostPrice;
+    const marginPercent = totalBeforeSPP > 0 ? (marginAmount / totalBeforeSPP * 100) : 0;
+    const profitability = totalCostPrice > 0 ? (marginAmount / totalCostPrice * 100) : 0;
+    
+    // Создаем строку аналитики согласно структуре CSV
+    const analyticsRow = {
+      "Артикул ВБ отчет реализации": nmId,
+      "Артикул продавца": vendorCode,
+      "Доставки": deliveries,
+      "Отказы": 0, // Нет данных в API
+      "% отказов": 0,
+      "Продажи": sales,
+      "Самовыкупы": 0, // Нет данных в API
+      "Раздачи": 0, // Нет данных в API  
+      "Продажи (органические)": sales, // Упрощено
+      "Доля размера в продажах": 0, // Нет данных
+      "Возвраты": refunds,
+      "% возвратов": refundRate.toFixed(2) + '%',
+      "Корректировки в продажах": corrections,
+      "Итого кол-во реализованного товара": sales - refunds,
+      "% выкупа": 0, // Нет данных
+      "Утилизировано": 0, // Нет данных
+      "Корректировки в перечислении за товар шт": 0,
+      
+      // Движение по цене до СПП
+      "Продажи до СПП": totalBeforeSPP.toFixed(2),
+      "Возвраты до СПП": returnsBeforeSPP.toFixed(2),
+      "Корректировки в продажах до СПП": 0,
+      "Вся стоимость реализованного товара до СПП": (totalBeforeSPP - returnsBeforeSPP).toFixed(2),
+      "% от всей суммы реализации": 0, // Нужен общий итог
+      "Средний чек продажи до СПП": averagePrice.toFixed(2),
+      "% комиссии ВБ до СПП": 0, // Нет точных данных
+      
+      // Движение по цене после СПП
+      "Продажи после СПП": totalAfterSPP.toFixed(2),
+      "Возвраты после СПП": returnsAfterSPP.toFixed(2),
+      "Корректировки в продажах после СПП": 0,
+      "Вся стоимость реализованного товара после СПП": (totalAfterSPP - returnsAfterSPP).toFixed(2),
+      "Средний чек продажи после СПП": averagePrice.toFixed(2),
+      "Сумма СПП": 0, // Нет данных
+      "% СПП": 0,
+      
+      // К перечислению
+      "Корректировки в перечислении за товар": 0,
+      "Продажи фактические (цена продажи - комиссия ВБ)": totalToPayment.toFixed(2),
+      "Возвраты полученный по факту за возврат по формуле": 0,
+      "К перечислению за товар": totalToPayment.toFixed(2),
+      
+      // Удержания ВБ
+      "Плановая комиссия + эквайринг": commission.toFixed(2),
+      "Фактическая комиссия": commission.toFixed(2),
+      "Стоимость логистики": logistics.toFixed(2),
+      "Логистика на единицу товара": sales > 0 ? (logistics / sales).toFixed(2) : '0',
+      "% логистики от реализациии до СПП": totalBeforeSPP > 0 ? (logistics / totalBeforeSPP * 100).toFixed(2) + '%' : '0%',
+      "Штрафы": penalties.toFixed(2),
+      "Доплаты": additionalPayments.toFixed(2),
+      "Хранение товаров попавших в отчет реализации": storage.toFixed(2),
+      "% хранения от реализациии до СПП": totalBeforeSPP > 0 ? (storage / totalBeforeSPP * 100).toFixed(2) + '%' : '0%',
+      "Платная приемка попавших в отчет реализации": 0, // Нет данных
+      "Реклама баланс + счет": adSpend.toFixed(2),
+      "Реклама баланс + счет на единицу товара": sales > 0 ? (adSpend / sales).toFixed(2) : '0',
+      "% ДРР (доля рекламных расходов) от реализациии до СПП": totalBeforeSPP > 0 ? (adSpend / totalBeforeSPP * 100).toFixed(2) + '%' : '0%',
+      "ИМИЗР (использование механик искуственного завышения рейтинга)": 0,
+      "Отзывы": 0,
+      "Кредит": 0,
+      "% кредита от реализациии до СПП": '0%',
+      "Прочие удержания": 0,
+      "% прочих удержаний от реализациии до СПП": '0%',
+      
+      // Итоги услуг ВБ
+      "Итого стоимость всех услуг ВБ от реализации до СПП": (commission + logistics + storage + penalties + adSpend).toFixed(2),
+      "% всех услуг ВБ от реализации до СПП": totalBeforeSPP > 0 ? ((commission + logistics + storage + penalties + adSpend) / totalBeforeSPP * 100).toFixed(2) + '%' : '0%',
+      "% всех услуг ВБ от реализации после СПП": totalAfterSPP > 0 ? ((commission + logistics + storage + penalties + adSpend) / totalAfterSPP * 100).toFixed(2) + '%' : '0%',
+      
+      // Итого к оплате
+      "Итого к оплате": totalToPayment.toFixed(2),
+      "Итого к оплате на единицу товара": sales > 0 ? (totalToPayment / sales).toFixed(2) : '0',
+      "Итого к оплате без самовыкупов": totalToPayment.toFixed(2),
+      
+      // Налоги
+      "Налог": 0, // Нет данных
+      "НДС": 0,
+      "НДС к возмещению от услуг": 0,
+      "Итого к оплате за вычетом налога": totalToPayment.toFixed(2),
+      
+      // Себестоимость
+      "Себестоимость реализованного товара": totalCostPrice.toFixed(2),
+      "Себестоимость Шушары по СС": 0, // Нет данных
+      "% себестоимости от суммы реализации до СПП": totalBeforeSPP > 0 ? (totalCostPrice / totalBeforeSPP * 100).toFixed(2) + '%' : '0%',
+      "Средняя себестоимость на единицу товара": costPrice.toFixed(2),
+      "Себестоимость утилизированного товара": 0,
+      "Сумма кэшбека (раздачи)": 0,
+      "Себестоимость самовыкупов": 0,
+      "Сумма самовыкупов": 0,
+      
+      // Маркетинг
+      "Маркетинг": adSpend.toFixed(2),
+      "% маркетинга от суммы реализации до СПП": totalBeforeSPP > 0 ? (adSpend / totalBeforeSPP * 100).toFixed(2) + '%' : '0%',
+      
+      // Операционная прибыль
+      "Операционная прибыль": marginAmount.toFixed(2),
+      "% от всей операционной прибыли": 0, // Нужен общий итог
+      "Операционная прибыль на единицу": sales > 0 ? (marginAmount / sales).toFixed(2) : '0',
+      "% прибыли от суммы реализации до СПП": marginPercent.toFixed(2) + '%',
+      "% прибыли от суммы реализации после СПП": totalAfterSPP > 0 ? (marginAmount / totalAfterSPP * 100).toFixed(2) + '%' : '0%',
+      "% прибыли от себестоимости реализованного товара": profitability.toFixed(2) + '%',
+      "Компенсация Шушары": 0 // Нет данных
+    };
+    
+    analyticsData.push(analyticsRow);
+  }
+  
+  console.log(`✅ Создано ${analyticsData.length} строк аналитики по товарам`);
+  return analyticsData;
 }
 
 export async function GET() {
