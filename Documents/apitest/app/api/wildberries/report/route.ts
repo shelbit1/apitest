@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
   try {
     console.log("🚀 Начало обработки запроса на получение отчета");
     
-    const { token, startDate, endDate, costPricesData, includeFinanceSheet = false } = await request.json();
+    const { token, startDate, endDate, costPricesData } = await request.json();
 
     if (!token || !startDate || !endDate) {
       console.error("❌ Отсутствуют обязательные параметры");
@@ -46,7 +46,6 @@ export async function POST(request: NextRequest) {
     console.log(`🔑 Токен: ${token.substring(0, 20)}...`);
     console.log(`🔑 Длина токена: ${token.length} символов`);
     console.log(`💰 Данные себестоимости: ${costPricesData ? Object.keys(costPricesData).length : 0} товаров`);
-    console.log(`📊 Включить лист 'Финансы РК': ${includeFinanceSheet}`);
     console.log(`🌐 Окружение: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🚀 Платформа: ${process.platform}`);
     
@@ -201,7 +200,7 @@ export async function POST(request: NextRequest) {
     
     // Создаем Excel файл
     console.log("📊 Создание Excel отчета...");
-    const buffer = await createExcelReport(data, storageData, acceptanceData, [], paymentsData, campaigns, financialData, costPriceData, startDate, endDate, cleanToken, includeFinanceSheet);
+    const buffer = await createExcelReport(data, storageData, acceptanceData, [], paymentsData, campaigns, financialData, costPriceData, startDate, endDate, cleanToken);
 
     console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
 
@@ -541,7 +540,7 @@ function processSKUData(data: any[], skuMap: Map<number, string>) {
   console.log(`📊 Обработано ${processed} SKU записей в батче`);
 }
 
-async function createExcelReport(data: any[], storageData: any[], acceptanceData: any[], advertData: any[], paymentsData: any[], campaigns: Campaign[], financialData: FinancialData[], costPriceData: any[], startDate: string, endDate: string, token: string, includeFinanceSheet: boolean = false): Promise<Buffer> {
+async function createExcelReport(data: any[], storageData: any[], acceptanceData: any[], advertData: any[], paymentsData: any[], campaigns: Campaign[], financialData: FinancialData[], costPriceData: any[], startDate: string, endDate: string, token: string): Promise<Buffer> {
   const startTime = Date.now();
   console.log("🚀 Начинаем создание Excel отчета...");
   
@@ -764,11 +763,11 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
 
   const formulasTime = Date.now();
 
-  // 🚀 ОПТИМИЗАЦИЯ: Создаем лист "Финансы РК" только по запросу
+  // 🚀 Создаем лист "Финансы РК" всегда (как было изначально)
   console.log(`📊 Проверка данных для листа "Финансы РК". Кампаний: ${campaigns.length}, финансовых записей: ${financialData.length}`);
   
-  if (includeFinanceSheet && campaigns.length > 0 && financialData.length > 0) {
-    console.log("🚀 Создание листа 'Финансы РК' (оптимизированная версия)...");
+  if (campaigns.length > 0 && financialData.length > 0) {
+    console.log("🚀 Создание листа 'Финансы РК'...");
     const financeStartTime = Date.now();
     
     // Получаем уникальные ID кампаний
@@ -816,9 +815,6 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     XLSX.utils.book_append_sheet(workbook, financeSheet, "Финансы РК");
     console.log(`✅ Лист "Финансы РК" создан за ${Date.now() - financeStartTime}ms с ${financeExcelData.length} записями`);
     
-  } else if (campaigns.length > 0 && financialData.length > 0) {
-    console.log("⚠️ Найдены данные для листа 'Финансы РК', но он отключен для оптимизации производительности");
-    console.log("💡 Для включения листа 'Финансы РК' передайте параметр includeFinanceSheet: true");
   } else {
     console.log("ℹ️ Нет данных для создания листа 'Финансы РК'");
   }
