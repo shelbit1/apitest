@@ -106,7 +106,26 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        throw new Error(`Ошибка API: ${response.status}`);
+        // Получаем детальную информацию об ошибке
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
+        }
+        
+        console.error("❌ Ошибка API:", errorData);
+        
+        // Формируем подробное сообщение об ошибке
+        let errorMessage = errorData.error || `Ошибка API: ${response.status}`;
+        if (errorData.help) {
+          errorMessage += `\n\n💡 Решение: ${errorData.help}`;
+        }
+        if (errorData.details) {
+          errorMessage += `\n\n📄 Детали: ${errorData.details}`;
+        }
+        
+        throw new Error(errorMessage);
       }
 
       // Получаем файл как blob
@@ -125,7 +144,21 @@ export default function Home() {
       alert("Отчет успешно скачан!");
     } catch (error) {
       console.error("Ошибка скачивания отчета:", error);
-      alert("Ошибка при скачивании отчета: " + (error as Error).message);
+      
+      // Извлекаем детальную информацию об ошибке
+      const errorMessage = (error as Error).message;
+      const errorLines = errorMessage.split('\n');
+      
+      // Создаем более красивое сообщение об ошибке
+      let displayMessage = errorLines[0]; // Основное сообщение
+      
+      if (errorLines.length > 1) {
+        // Добавляем дополнительную информацию в новые строки
+        displayMessage = errorLines.join('\n');
+      }
+      
+      // Показываем alert с форматированным сообщением
+      alert(`❌ ${displayMessage}`);
     } finally {
       setIsLoading(false);
     }
@@ -174,9 +207,26 @@ export default function Home() {
       console.log("📡 Ответ от сервера:", response.status);
       
       if (!response.ok) {
-        const errorData = await response.json();
+        // Получаем детальную информацию об ошибке
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
+        }
+        
         console.error("❌ Ошибка от сервера:", errorData);
-        throw new Error(errorData.error || 'Ошибка при получении данных');
+        
+        // Формируем подробное сообщение об ошибке
+        let errorMessage = errorData.error || `Ошибка API: ${response.status}`;
+        if (errorData.help) {
+          errorMessage += `\n\n💡 Решение: ${errorData.help}`;
+        }
+        if (errorData.details) {
+          errorMessage += `\n\n📄 Детали: ${errorData.details}`;
+        }
+        
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();

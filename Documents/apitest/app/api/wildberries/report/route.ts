@@ -41,7 +41,29 @@ export async function POST(request: NextRequest) {
 
     console.log(`📅 Период отчета: ${startDate} - ${endDate}`);
     console.log(`🔑 Токен: ${token.substring(0, 20)}...`);
+    console.log(`🔑 Длина токена: ${token.length} символов`);
     console.log(`💰 Данные себестоимости: ${costPricesData ? Object.keys(costPricesData).length : 0} товаров`);
+    console.log(`🌐 Окружение: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🚀 Платформа: ${process.platform}`);
+    
+    // Проверка формата токена
+    if (token.length < 10) {
+      console.error("❌ Токен слишком короткий");
+      return NextResponse.json(
+        { error: "Некорректный формат токена. Токен должен содержать минимум 10 символов." },
+        { status: 400 }
+      );
+    }
+    
+    // Проверка на наличие недопустимых символов
+    const tokenPattern = /^[a-zA-Z0-9\-_.]+$/;
+    if (!tokenPattern.test(token)) {
+      console.error("❌ Токен содержит недопустимые символы");
+      return NextResponse.json(
+        { error: "Токен содержит недопустимые символы. Используйте только буквы, цифры, дефисы и подчеркивания." },
+        { status: 400 }
+      );
+    }
 
     // Валидация дат
     const start = new Date(startDate);
@@ -76,13 +98,22 @@ export async function POST(request: NextRequest) {
     const apiUrl = `https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod?dateFrom=${startDate}&dateTo=${endDate}&key=${token}`;
     
     console.log(`📡 URL запроса реализации: ${apiUrl.replace(token, token.substring(0, 20) + '...')}`);
-    console.log(`🔑 Длина токена: ${token.length} символов`);
     console.log(`🔑 Начало токена: ${token.substring(0, 30)}...`);
+    console.log(`⏰ Время запроса: ${new Date().toISOString()}`);
     
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; WB-API-Client/1.0)',
+        'Accept': 'application/json',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+      }
+    });
     
     console.log(`📊 Ответ API реализации: ${response.status} ${response.statusText}`);
     console.log(`📋 Заголовки ответа:`, Object.fromEntries(response.headers.entries()));
+    console.log(`📊 Content-Type: ${response.headers.get('content-type')}`);
+    console.log(`📊 Response Size: ${response.headers.get('content-length')} bytes`);
     
     if (!response.ok && response.status === 401) {
       console.log("🔄 Ошибка 401 с query параметром. Пробуем Authorization заголовок...");
@@ -224,24 +255,48 @@ export async function POST(request: NextRequest) {
       console.error(`❌ Ошибка API реализации: ${response.status} ${response.statusText}`);
       
       // Получаем тело ошибки для диагностики
-      const errorText = await response.text();
-      console.error(`📄 Тело ошибки:`, errorText);
+      let errorText = '';
+      try {
+        errorText = await response.text();
+        console.error(`📄 Тело ошибки:`, errorText);
+      } catch (e) {
+        console.error(`📄 Не удалось получить тело ошибки:`, e);
+      }
       
       let errorMessage = `Ошибка API Wildberries: ${response.status}`;
+      let userHelp = '';
+      
       if (response.status === 401) {
-        errorMessage = "Неверный или недействительный API токен. Проверьте токен в личном кабинете Wildberries.";
+        errorMessage = "Неверный или недействительный API токен";
+        userHelp = "Проверьте токен в личном кабинете Wildberries в разделе 'Настройки → Доступ к API'";
         console.error("🚨 Ошибка авторизации. Возможные причины:");
         console.error("   - Токен неправильный или просрочен");
         console.error("   - Токен не имеет прав на статистику");
         console.error("   - Неправильный формат токена");
       } else if (response.status === 403) {
-        errorMessage = "Нет доступа к данным. Проверьте права токена.";
+        errorMessage = "Нет доступа к данным";
+        userHelp = "Проверьте права токена. Токен должен иметь доступ к статистике.";
       } else if (response.status === 429) {
-        errorMessage = "Превышен лимит запросов. Попробуйте позже.";
+        errorMessage = "Превышен лимит запросов";
+        userHelp = "Попробуйте позже. Wildberries ограничивает количество запросов в минуту.";
+      } else if (response.status === 400) {
+        errorMessage = "Некорректный запрос";
+        userHelp = "Проверьте период дат. Максимальный период для отчета - 30 дней.";
+      } else if (response.status === 500) {
+        errorMessage = "Внутренняя ошибка сервера Wildberries";
+        userHelp = "Попробуйте позже. Проблема на стороне Wildberries.";
+      } else if (response.status === 504) {
+        errorMessage = "Время ожидания истекло";
+        userHelp = "Сервер Wildberries не отвечает. Попробуйте позже.";
       }
       
       return NextResponse.json(
-        { error: errorMessage },
+        { 
+          error: errorMessage,
+          help: userHelp,
+          status: response.status,
+          details: errorText || response.statusText
+        },
         { status: response.status }
       );
     }
@@ -299,9 +354,39 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error("💥 Критическая ошибка API:", error);
+    
+    // Более детальная обработка ошибок
+    let errorMessage = "Внутренняя ошибка сервера";
+    let statusCode = 500;
+    
+    if (error instanceof Error) {
+      console.error("📄 Сообщение ошибки:", error.message);
+      console.error("📄 Stack trace:", error.stack);
+      
+      // Анализируем тип ошибки
+      if (error.message.includes('401')) {
+        errorMessage = "Ошибка авторизации: Неверный или недействительный API токен. Проверьте токен в личном кабинете Wildberries.";
+        statusCode = 401;
+      } else if (error.message.includes('403')) {
+        errorMessage = "Ошибка доступа: Нет прав на получение данных. Проверьте права токена.";
+        statusCode = 403;
+      } else if (error.message.includes('429')) {
+        errorMessage = "Превышен лимит запросов. Попробуйте позже.";
+        statusCode = 429;
+      } else if (error.message.includes('timeout')) {
+        errorMessage = "Превышено время ожидания ответа от API Wildberries.";
+        statusCode = 408;
+      } else if (error.message.includes('Network')) {
+        errorMessage = "Ошибка сети. Проверьте подключение к интернету.";
+        statusCode = 503;
+      } else {
+        errorMessage = `Ошибка: ${error.message}`;
+      }
+    }
+    
     return NextResponse.json(
-      { error: "Внутренняя ошибка сервера" },
-      { status: 500 }
+      { error: errorMessage },
+      { status: statusCode }
     );
   }
 }
