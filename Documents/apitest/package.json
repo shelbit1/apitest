@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "exceljs": "^4.4.0",
+    "form-data": "^4.0.3",
     "next": "15.3.4",
     "node-fetch": "^3.3.2",
     "react": "^19.0.0",

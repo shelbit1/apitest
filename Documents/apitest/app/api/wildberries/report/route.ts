@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import * as ExcelJS from "exceljs";
+import { validateWildberriesToken } from "../../../lib/wildberries-api";
+import { createExcelReport as createExcelReportFromLib } from "../../../lib/excel-generator";
+import { addDays, formatDate, mapCampaignType, mapCampaignStatus } from "../../../lib/data-mappers";
 
 // Интерфейсы для рекламных кампаний
 interface Campaign {
@@ -29,7 +32,7 @@ export async function POST(request: NextRequest) {
   try {
     console.log("🚀 Начало обработки запроса на получение отчета");
     
-    const { token, startDate, endDate, costPricesData } = await request.json();
+    const { token, startDate, endDate, costPricesData, includeFinanceSheet = false } = await request.json();
 
     if (!token || !startDate || !endDate) {
       console.error("❌ Отсутствуют обязательные параметры");
@@ -43,6 +46,7 @@ export async function POST(request: NextRequest) {
     console.log(`🔑 Токен: ${token.substring(0, 20)}...`);
     console.log(`🔑 Длина токена: ${token.length} символов`);
     console.log(`💰 Данные себестоимости: ${costPricesData ? Object.keys(costPricesData).length : 0} товаров`);
+    console.log(`📊 Включить лист 'Финансы РК': ${includeFinanceSheet}`);
     console.log(`🌐 Окружение: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🚀 Платформа: ${process.platform}`);
     
@@ -52,23 +56,12 @@ export async function POST(request: NextRequest) {
     console.log(`🔍 Длина очищенного токена: ${cleanToken.length} символов`);
     
     // Проверка формата токена
-    if (cleanToken.length < 10) {
-      console.error("❌ Токен слишком короткий");
-      return NextResponse.json(
-        { error: "Некорректный формат токена. Токен должен содержать минимум 10 символов." },
-        { status: 400 }
-      );
-    }
-    
-    // Проверяем на наличие недопустимых символов (добавляем точку как допустимый символ)
-    const invalidChars = cleanToken.match(/[^A-Za-z0-9+/=\-_.]/g);
-    if (invalidChars) {
-      console.error("❌ Токен содержит недопустимые символы:", invalidChars);
+    if (!validateWildberriesToken(cleanToken)) {
+      console.error("❌ Некорректный формат токена");
       return NextResponse.json(
         { 
-          error: "Токен содержит недопустимые символы",
-          help: "Проверьте токен в личном кабинете Wildberries в разделе 'Настройки → Доступ к API'",
-          details: `Найдены недопустимые символы: ${invalidChars.join(', ')}`
+          error: "Некорректный формат токена",
+          help: "Проверьте токен в личном кабинете Wildberries в разделе 'Настройки → Доступ к API'"
         },
         { status: 400 }
       );
@@ -212,7 +205,7 @@ export async function POST(request: NextRequest) {
     
     // Создаем Excel файл
     console.log("📊 3/3 Создание Excel отчета...");
-    const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, cleanToken);
+    const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, cleanToken, includeFinanceSheet);
 
     console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
 
@@ -267,40 +260,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Функция создания Excel отчета
-// Функции для работы с рекламными кампаниями
-function mapCampaignType(type: number): string {
-  switch (type) {
-    case 4: return 'Кампания в каталоге';
-    case 5: return 'Кампания в карточке товара';
-    case 6: return 'Кампания в поиске';
-    case 7: return 'Кампания в рекомендациях на главной странице';
-    case 8: return 'Автоматическая кампания';
-    case 9: return 'Поиск + каталог';
-    default: return `Неизвестный тип (${type})`;
-  }
-}
-
-function mapCampaignStatus(status: number): string {
-  switch (status) {
-    case 4: return 'Готова к запуску';
-    case 7: return 'Кампания завершена';
-    case 8: return 'Отказ';
-    case 9: return 'Идут показы';
-    case 11: return 'Кампания на паузе';
-    default: return `Неизвестный статус (${status})`;
-  }
-}
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0];
-}
+// Функции для работы с рекламными кампаниями импортированы из data-mappers.ts
 
 async function fetchCampaigns(apiKey: string): Promise<Campaign[]> {
   try {
@@ -458,74 +418,137 @@ function applyBufferDayLogic(data: FinancialData[], originalStart: Date, origina
 
 async function fetchCampaignSKUs(apiKey: string, campaignIds: number[]): Promise<Map<number, string>> {
   try {
-    console.log('📊 Получение SKU данных для кампаний...');
+    console.log(`📊 Получение SKU данных для ${campaignIds.length} кампаний...`);
+    const startTime = Date.now();
     
     const skuMap = new Map<number, string>();
-    const batchSize = 50;
+    const batchSize = 100; // Увеличиваем размер батча для лучшей производительности
+    const batches = Math.ceil(campaignIds.length / batchSize);
+    
+    console.log(`📦 Обработка в ${batches} батчах по ${batchSize} кампаний`);
     
     for (let i = 0; i < campaignIds.length; i += batchSize) {
       const batch = campaignIds.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      
+      console.log(`📤 Обработка батча ${batchNum}/${batches} (${batch.length} кампаний)`);
+      const batchStartTime = Date.now();
       
       try {
+        // Добавляем таймаут для запроса
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд таймаут
+        
         const response = await fetch('https://advert-api.wildberries.ru/adv/v1/promotion/adverts', {
           method: 'POST',
           headers: {
             'Authorization': apiKey,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify(batch)
+          body: JSON.stringify(batch),
+          signal: controller.signal
         });
+        
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
-          console.error(`❌ Ошибка получения SKU для пакета: ${response.status} ${response.statusText}`);
+          console.error(`❌ Ошибка получения SKU для батча ${batchNum}: ${response.status} ${response.statusText}`);
+          
+          // Обрабатываем ошибку 429 (Rate Limit)
+          if (response.status === 429) {
+            console.warn(`⚠️ Превышен лимит запросов для батча ${batchNum}. Ожидание 1 минута...`);
+            await new Promise(resolve => setTimeout(resolve, 60000));
+            
+            // Повторяем запрос
+            const retryResponse = await fetch('https://advert-api.wildberries.ru/adv/v1/promotion/adverts', {
+              method: 'POST',
+              headers: {
+                'Authorization': apiKey,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(batch)
+            });
+            
+            if (retryResponse.ok) {
+              const retryData = await retryResponse.json();
+              console.log(`✅ Батч ${batchNum} успешно обработан после повторной попытки`);
+              if (Array.isArray(retryData)) {
+                processSKUData(retryData, skuMap);
+              }
+            } else {
+              console.error(`❌ Повторная попытка для батча ${batchNum} не удалась: ${retryResponse.status}`);
+            }
+          }
           continue;
         }
 
         const data = await response.json();
         
         if (Array.isArray(data)) {
-          data.forEach((item) => {
-            try {
-              let nm = '';
-              
-              if (item.advertId) {
-                if (item.type === 9 && item.auction_multibids && Array.isArray(item.auction_multibids) && item.auction_multibids.length > 0) {
-                  nm = item.auction_multibids[0].nm;
-                } else if (item.type === 8 && item.autoParams && item.autoParams.nms && Array.isArray(item.autoParams.nms) && item.autoParams.nms.length > 0) {
-                  nm = item.autoParams.nms[0];
-                } else if (item.unitedParams && Array.isArray(item.unitedParams) && item.unitedParams.length > 0 && item.unitedParams[0].nms && Array.isArray(item.unitedParams[0].nms) && item.unitedParams[0].nms.length > 0) {
-                  nm = item.unitedParams[0].nms[0];
-                }
-
-                if (nm) {
-                  skuMap.set(item.advertId, nm.toString());
-                }
-              }
-            } catch (innerError) {
-              console.error('❌ Ошибка при обработке SKU записи:', innerError);
-            }
-          });
+          processSKUData(data, skuMap);
+          console.log(`✅ Батч ${batchNum} обработан за ${Date.now() - batchStartTime}ms`);
         }
         
+        // Уменьшаем задержку между батчами
         if (i + batchSize < campaignIds.length) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 100)); // Уменьшили с 200ms до 100ms
         }
         
-      } catch (batchError) {
-        console.error('❌ Ошибка при обработке пакета SKU:', batchError);
+      } catch (batchError: any) {
+        if (batchError.name === 'AbortError') {
+          console.error(`❌ Таймаут при обработке батча ${batchNum}`);
+        } else {
+          console.error(`❌ Ошибка при обработке батча ${batchNum}:`, batchError);
+        }
       }
     }
     
-    console.log(`✅ Получено SKU данных: ${skuMap.size} из ${campaignIds.length} кампаний`);
+    const totalTime = Date.now() - startTime;
+    console.log(`✅ Получено SKU данных: ${skuMap.size} из ${campaignIds.length} кампаний за ${totalTime}ms`);
+    console.log(`📊 Производительность: ${(campaignIds.length / totalTime * 1000).toFixed(1)} кампаний/сек`);
+    
     return skuMap;
     
   } catch (error) {
-    console.error('❌ Ошибка при получении SKU данных:', error);
+    console.error('❌ Критическая ошибка при получении SKU данных:', error);
     return new Map();
   }
 }
 
-async function createExcelReport(data: any[], storageData: any[], acceptanceData: any[], advertData: any[], productsData: any[], paymentsData: any[], campaigns: Campaign[], financialData: FinancialData[], costPriceData: any[], productAnalyticsData: any[], startDate: string, endDate: string, token: string): Promise<Buffer> {
+// Вспомогательная функция для обработки SKU данных
+function processSKUData(data: any[], skuMap: Map<number, string>) {
+  let processed = 0;
+  
+  data.forEach((item) => {
+    try {
+      let nm = '';
+      
+      if (item.advertId) {
+        if (item.type === 9 && item.auction_multibids && Array.isArray(item.auction_multibids) && item.auction_multibids.length > 0) {
+          nm = item.auction_multibids[0].nm;
+        } else if (item.type === 8 && item.autoParams && item.autoParams.nms && Array.isArray(item.autoParams.nms) && item.autoParams.nms.length > 0) {
+          nm = item.autoParams.nms[0];
+        } else if (item.unitedParams && Array.isArray(item.unitedParams) && item.unitedParams.length > 0 && item.unitedParams[0].nms && Array.isArray(item.unitedParams[0].nms) && item.unitedParams[0].nms.length > 0) {
+          nm = item.unitedParams[0].nms[0];
+        }
+
+        if (nm) {
+          skuMap.set(item.advertId, nm.toString());
+          processed++;
+        }
+      }
+    } catch (innerError) {
+      console.error('❌ Ошибка при обработке SKU записи:', innerError);
+    }
+  });
+  
+  console.log(`📊 Обработано ${processed} SKU записей в батче`);
+}
+
+async function createExcelReport(data: any[], storageData: any[], acceptanceData: any[], advertData: any[], productsData: any[], paymentsData: any[], campaigns: Campaign[], financialData: FinancialData[], costPriceData: any[], productAnalyticsData: any[], startDate: string, endDate: string, token: string, includeFinanceSheet: boolean = false): Promise<Buffer> {
+  const startTime = Date.now();
+  console.log("🚀 Начинаем создание Excel отчета...");
+  
   // Подготавливаем данные для Excel
   const excelData = data.map((item) => ({
     "Номер поставки": item.gi_id || "",
@@ -561,6 +584,9 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     "Дата заказа (только дата)": item.order_dt ? item.order_dt.split('T')[0] : "",
     "Дата продажи (только дата)": item.sale_dt ? item.sale_dt.split('T')[0] : "",
   }));
+
+  console.log(`⏱️ Подготовка данных завершена за ${Date.now() - startTime}ms`);
+  const dataTime = Date.now();
 
   // Создаем рабочую книгу
   const workbook = XLSX.utils.book_new();
@@ -609,8 +635,8 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
   // Добавляем лист в книгу
   XLSX.utils.book_append_sheet(workbook, worksheet, "Отчет детализации");
   
-  // Добавляем лист с данными о хранении
-  console.log(`Создание листа хранения. Количество записей: ${storageData?.length || 0}`);
+  // Добавляем лист с данными о хранении (только если есть данные)
+  console.log(`📊 Создание листа хранения. Количество записей: ${storageData?.length || 0}`);
   
   if (storageData && storageData.length > 0) {
     const storageExcelData = storageData.map((item) => ({
@@ -631,8 +657,6 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
       "Дата фиксации тарифа": item.tariffFixDate || "",
       "Дата снижения тарифа": item.tariffLowerDate || "",
     }));
-    
-    console.log("🔍 Первая запись хранения для Excel:", JSON.stringify(storageExcelData[0], null, 2));
     
     const storageSheet = XLSX.utils.json_to_sheet(storageExcelData);
     
@@ -658,45 +682,11 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     storageSheet['!cols'] = storageColumnWidths;
     
     XLSX.utils.book_append_sheet(workbook, storageSheet, "Хранение");
-    console.log("✅ Лист 'Хранение' добавлен в Excel с полными данными");
-  } else {
-    // Добавляем лист с отладочной информацией о хранении
-    const debugStorageData = [{
-      "Статус": "❌ ДАННЫЕ ХРАНЕНИЯ НЕ НАЙДЕНЫ",
-      "Информация": "API хранения не вернул данных",
-      "Период": `${startDate} - ${endDate}`,
-      "Лимит периода": "Максимум 8 дней для API хранения",
-      "Время запроса": new Date().toISOString(),
-      "Рекомендация": "Проверьте период запроса и токен",
-      "Возможные причины": "Период > 8 дней | Нет данных | Ошибка токена | API недоступен",
-      "API Endpoint": "GET /api/v1/paid_storage",
-      "Лимит запросов": "1 запрос в минуту",
-      "Примечание": "Лист создан для отладки",
-    }];
-    
-    const storageSheet = XLSX.utils.json_to_sheet(debugStorageData);
-    
-    // Настройка ширины колонок для отладочной информации
-    const debugColumnWidths = [
-      { wch: 30 }, // Статус
-      { wch: 35 }, // Информация
-      { wch: 20 }, // Период
-      { wch: 25 }, // Лимит периода
-      { wch: 25 }, // Время запроса
-      { wch: 30 }, // Рекомендация
-      { wch: 50 }, // Возможные причины
-      { wch: 25 }, // API Endpoint
-      { wch: 20 }, // Лимит запросов
-      { wch: 25 }, // Примечание
-    ];
-    storageSheet['!cols'] = debugColumnWidths;
-    
-    XLSX.utils.book_append_sheet(workbook, storageSheet, "Хранение");
-    console.log("🔧 Добавлен отладочный лист 'Хранение' (нет данных)");
+    console.log("✅ Лист 'Хранение' добавлен в Excel с данными");
   }
   
-  // Добавляем лист с данными о приемке
-  console.log(`Создание листа приемки. Количество записей: ${acceptanceData?.length || 0}`);
+  // Добавляем лист с данными о приемке (только если есть данные)
+  console.log(`📊 Создание листа приемки. Количество записей: ${acceptanceData?.length || 0}`);
   
   if (acceptanceData && acceptanceData.length > 0) {
     const acceptanceExcelData = acceptanceData.map((item) => ({
@@ -708,8 +698,6 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
       "Количество товаров, шт.": item.count || 0,
       "Суммарная стоимость приёмки, ₽": item.total || 0,
     }));
-    
-    console.log("✅ Данные для Excel приемки (первые 3 записи):", JSON.stringify(acceptanceExcelData.slice(0, 3), null, 2));
     
     const acceptanceSheet = XLSX.utils.json_to_sheet(acceptanceExcelData);
     
@@ -726,49 +714,14 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     acceptanceSheet['!cols'] = acceptanceColumnWidths;
     
     XLSX.utils.book_append_sheet(workbook, acceptanceSheet, "Приемка");
-    console.log("✅ Лист 'Приемка' добавлен в Excel с новыми полями");
-  } else {
-    // Добавляем лист с отладочной информацией
-    const debugAcceptanceData = [{
-      "Статус": "❌ ДАННЫЕ ПРИЕМКИ НЕ НАЙДЕНЫ",
-      "Информация": "API приемки не вернул данных",
-      "Период": `${startDate} - ${endDate}`,
-      "Лимит периода": "Максимум 31 день для API приемки",
-      "Время запроса": new Date().toISOString(),
-      "Рекомендация": "Проверьте период запроса и токен",
-      "Возможные причины": "Нет данных за период | Ошибка токена | API недоступен",
-      "API Endpoint": "GET /api/v1/acceptance_report",
-      "Лимит запросов": "1 запрос в минуту",
-      "Примечание": "Лист создан для отладки",
-    }];
-    
-    const acceptanceSheet = XLSX.utils.json_to_sheet(debugAcceptanceData);
-    
-    // Настройка ширины колонок для отладочной информации
-    const debugColumnWidths = [
-      { wch: 30 }, // Статус
-      { wch: 35 }, // Информация
-      { wch: 20 }, // Период
-      { wch: 25 }, // Лимит периода
-      { wch: 25 }, // Время запроса
-      { wch: 30 }, // Рекомендация
-      { wch: 50 }, // Возможные причины
-      { wch: 25 }, // API Endpoint
-      { wch: 20 }, // Лимит запросов
-      { wch: 25 }, // Примечание
-    ];
-    acceptanceSheet['!cols'] = debugColumnWidths;
-    
-    XLSX.utils.book_append_sheet(workbook, acceptanceSheet, "Приемка");
-    console.log("🔧 Добавлен отладочный лист 'Приемка' (нет данных)");
+    console.log("✅ Лист 'Приемка' добавлен в Excel с данными");
   }
-  
 
-  // Добавляем лист с данными о товарах
-  console.log(`Создание листа товаров. Количество записей: ${productsData?.length || 0}`);
+  // Добавляем лист с данными о товарах (только если есть данные)
+  console.log(`📊 Создание листа товаров. Количество записей: ${productsData?.length || 0}`);
 
   if (productsData && productsData.length > 0) {
-        const productsExcelData = productsData.map((item) => ({
+    const productsExcelData = productsData.map((item) => ({
       "ID карточки": item.nmID || "",
       "Артикул продавца": item.vendorCode || "",
       "Название товара": item.object || "",
@@ -787,11 +740,9 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
       "Характеристики": Array.isArray(item.characteristics) ? item.characteristics.length : 0,
     }));
 
-    console.log("✅ Данные для Excel товаров (первые 3 записи):", JSON.stringify(productsExcelData.slice(0, 3), null, 2));
-
     const productsSheet = XLSX.utils.json_to_sheet(productsExcelData);
 
-        // Настройка ширины колонок для листа товаров
+    // Настройка ширины колонок для листа товаров
     const productsColumnWidths = [
       { wch: 15 }, // ID карточки
       { wch: 20 }, // Артикул продавца
@@ -813,45 +764,11 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     productsSheet['!cols'] = productsColumnWidths;
 
     XLSX.utils.book_append_sheet(workbook, productsSheet, "Мои товары");
-    console.log("✅ Лист 'Мои товары' добавлен в Excel");
-  } else {
-    // Добавляем лист с отладочной информацией
-         const debugProductsData = [{
-       "Статус": "❌ ДАННЫЕ КАРТОЧЕК НЕ НАЙДЕНЫ",
-       "Информация": "API карточек товаров не вернул данных",
-       "Период": `${startDate} - ${endDate}`,
-       "Лимит периода": "100 карточек за запрос",
-       "Время запроса": new Date().toISOString(),
-       "Рекомендация": "Проверьте токен и доступ к API контента",
-       "Возможные причины": "Нет карточек | Ошибка токена | API недоступен",
-       "API Endpoint": "POST /content/v2/get/cards/list",
-       "Лимит запросов": "100 запросов в минуту",
-       "Примечание": "Лист создан для отладки",
-     }];
-
-    const productsSheet = XLSX.utils.json_to_sheet(debugProductsData);
-
-    // Настройка ширины колонок для отладочной информации
-    const debugColumnWidths = [
-      { wch: 30 }, // Статус
-      { wch: 35 }, // Информация
-      { wch: 20 }, // Период
-      { wch: 25 }, // Лимит периода
-      { wch: 25 }, // Время запроса
-      { wch: 30 }, // Рекомендация
-      { wch: 50 }, // Возможные причины
-      { wch: 25 }, // API Endpoint
-      { wch: 20 }, // Лимит запросов
-      { wch: 25 }, // Примечание
-    ];
-    productsSheet['!cols'] = debugColumnWidths;
-
-         XLSX.utils.book_append_sheet(workbook, productsSheet, "Мои товары");
-     console.log("🔧 Добавлен отладочный лист 'Мои товары' (нет данных)");
+    console.log("✅ Лист 'Мои товары' добавлен в Excel с данными");
   }
 
-  // Добавляем лист с данными о себестоимости
-  console.log(`Создание листа себестоимости. Количество записей: ${costPriceData?.length || 0}`);
+  // Добавляем лист с данными о себестоимости (только если есть данные)
+  console.log(`📊 Создание листа себестоимости. Количество записей: ${costPriceData?.length || 0}`);
   
   if (costPriceData && costPriceData.length > 0) {
     const costPriceExcelData = costPriceData.map((item) => ({
@@ -868,8 +785,6 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
       "Дата создания": item.createdAt || "",
       "Дата обновления": item.updatedAt || ""
     }));
-
-    console.log("✅ Данные для Excel себестоимости (первые 3 записи):", JSON.stringify(costPriceExcelData.slice(0, 3), null, 2));
 
     const costPriceSheet = XLSX.utils.json_to_sheet(costPriceExcelData);
 
@@ -891,47 +806,11 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     costPriceSheet['!cols'] = costPriceColumnWidths;
 
     XLSX.utils.book_append_sheet(workbook, costPriceSheet, "Себес");
-    console.log("✅ Лист 'Себес' добавлен в Excel");
-  } else {
-    // Добавляем лист с отладочной информацией
-    const debugCostPriceData = [{
-      "Статус": "❌ ДАННЫЕ СЕБЕСТОИМОСТИ НЕ НАЙДЕНЫ",
-      "Информация": "API карточек товаров не вернул данных",
-      "Время запроса": new Date().toISOString(),
-      "Рекомендация": "Проверьте токен и доступ к API контента",
-      "Возможные причины": "Нет карточек | Ошибка токена | API недоступен",
-      "API Endpoint": "POST /content/v2/get/cards/list",
-      "Лимит запросов": "100 запросов в минуту",
-      "Примечание": "Лист создан для отладки",
-      "Инструкция": "Заполните себестоимость на странице /cost-price",
-      "Формула маржи": "Маржа = Цена - Себестоимость",
-      "Формула рентабельности": "Рентабельность = (Цена - Себестоимость) / Цена * 100%"
-    }];
-
-    const costPriceSheet = XLSX.utils.json_to_sheet(debugCostPriceData);
-
-    // Настройка ширины колонок для отладочной информации
-    const debugColumnWidths = [
-      { wch: 30 }, // Статус
-      { wch: 35 }, // Информация
-      { wch: 25 }, // Время запроса
-      { wch: 30 }, // Рекомендация
-      { wch: 50 }, // Возможные причины
-      { wch: 25 }, // API Endpoint
-      { wch: 20 }, // Лимит запросов
-      { wch: 25 }, // Примечание
-      { wch: 40 }, // Инструкция
-      { wch: 30 }, // Формула маржи
-      { wch: 40 }, // Формула рентабельности
-    ];
-    costPriceSheet['!cols'] = debugColumnWidths;
-
-    XLSX.utils.book_append_sheet(workbook, costPriceSheet, "Себес");
-    console.log("🔧 Добавлен отладочный лист 'Себес' (нет данных)");
+    console.log("✅ Лист 'Себес' добавлен в Excel с данными");
   }
 
-  // Добавляем лист с аналитикой по товарам
-  console.log(`Создание листа аналитики по товарам. Количество записей: ${productAnalyticsData?.length || 0}`);
+  // Добавляем лист с аналитикой по товарам (только если есть данные)
+  console.log(`📊 Создание листа аналитики по товарам. Количество записей: ${productAnalyticsData?.length || 0}`);
   
   if (productAnalyticsData && productAnalyticsData.length > 0) {
     const productAnalyticsSheet = XLSX.utils.json_to_sheet(productAnalyticsData);
@@ -941,100 +820,11 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     productAnalyticsSheet['!cols'] = analyticsColumnWidths;
     
     XLSX.utils.book_append_sheet(workbook, productAnalyticsSheet, "По товарам");
-    console.log("✅ Лист 'По товарам' добавлен в Excel");
-  } else {
-    // Добавляем лист с отладочной информацией
-    const debugAnalyticsData = [{
-      "Статус": "❌ ДАННЫЕ АНАЛИТИКИ НЕ НАЙДЕНЫ",
-      "Информация": "Нет данных для создания аналитики по товарам",
-      "Возможные причины": "Нет данных реализации | Нет данных о товарах | Пустые артикулы",
-      "Рекомендация": "Проверьте период запроса и наличие данных",
-      "Время запроса": new Date().toISOString(),
-      "Примечание": "Лист создан для отладки"
-    }];
-    
-    const productAnalyticsSheet = XLSX.utils.json_to_sheet(debugAnalyticsData);
-    
-    // Настройка ширины колонок для отладочной информации
-    const debugColumnWidths = [
-      { wch: 30 }, // Статус
-      { wch: 35 }, // Информация
-      { wch: 50 }, // Возможные причины
-      { wch: 30 }, // Рекомендация
-      { wch: 25 }, // Время запроса
-      { wch: 25 }, // Примечание
-    ];
-    productAnalyticsSheet['!cols'] = debugColumnWidths;
-    
-    XLSX.utils.book_append_sheet(workbook, productAnalyticsSheet, "По товарам");
-    console.log("🔧 Добавлен отладочный лист 'По товарам' (нет данных)");
+    console.log("✅ Лист 'По товарам' добавлен в Excel с данными");
   }
 
-  // Добавляем лист с данными о пополнениях
-  console.log(`Создание листа пополнений. Количество записей: ${paymentsData?.length || 0}`);
-
-  if (paymentsData && paymentsData.length > 0) {
-    const paymentsExcelData = paymentsData.map((item) => ({
-      "ID пополнения": item.id || "",
-      "Дата пополнения": item.date || "",
-      "Сумма пополнения": item.sum || 0,
-      "Тип источника": mapPaymentType(item.type),
-      "Статус": mapPaymentStatus(item.statusId),
-      "Статус карты": item.cardStatus || "",
-    }));
-
-    console.log("✅ Данные для Excel пополнений (первые 3 записи):", JSON.stringify(paymentsExcelData.slice(0, 3), null, 2));
-
-    const paymentsSheet = XLSX.utils.json_to_sheet(paymentsExcelData);
-
-    // Настройка ширины колонок для листа пополнений
-    const paymentsColumnWidths = [
-      { wch: 15 }, // ID пополнения
-      { wch: 20 }, // Дата пополнения
-      { wch: 15 }, // Сумма пополнения
-      { wch: 15 }, // Тип источника
-      { wch: 15 }, // Статус
-      { wch: 15 }, // Статус карты
-    ];
-    paymentsSheet['!cols'] = paymentsColumnWidths;
-
-    // По требованию пользователя лист "Тест" (пополнения) больше не добавляется в отчёт
-    console.log("ℹ️ Лист 'Тест' не добавляется в Excel по запросу пользователя");
-  } else {
-    // Добавляем лист с отладочной информацией
-         const debugPaymentsData = [{
-       "Статус": "❌ ДАННЫЕ ПОПОЛНЕНИЙ НЕ НАЙДЕНЫ",
-       "Информация": "API истории пополнений не вернул данных",
-       "Период": `${startDate} - ${endDate}`,
-       "Лимит периода": "Максимум 31 день для API пополнений",
-       "Время запроса": new Date().toISOString(),
-       "Рекомендация": "Проверьте период запроса и токен",
-       "Возможные причины": "Нет данных за период | Ошибка токена | API недоступен",
-       "API Endpoint": "GET /adv/v1/payments",
-       "Лимит запросов": "1 запрос в секунду",
-       "Примечание": "Лист создан для отладки",
-     }];
-
-    const paymentsSheet = XLSX.utils.json_to_sheet(debugPaymentsData);
-
-    // Настройка ширины колонок для отладочной информации
-    const debugColumnWidths = [
-      { wch: 30 }, // Статус
-      { wch: 35 }, // Информация
-      { wch: 20 }, // Период
-      { wch: 25 }, // Лимит периода
-      { wch: 25 }, // Время запроса
-      { wch: 30 }, // Рекомендация
-      { wch: 50 }, // Возможные причины
-      { wch: 25 }, // API Endpoint
-      { wch: 20 }, // Лимит запросов
-      { wch: 25 }, // Примечание
-    ];
-    paymentsSheet['!cols'] = debugColumnWidths;
-
-    // По требованию пользователя отладочный лист "Тест" больше не добавляется
-    console.log("ℹ️ Отладочный лист 'Тест' не добавляется (нет данных)");
-  }
+  console.log(`⏱️ Создание листов завершено за ${Date.now() - dataTime}ms`);
+  const sheetsTime = Date.now();
 
   // Добавляем аналитический лист "По периодам" с формулами
   console.log("📊 Создание аналитического листа 'По периодам'...");
@@ -1079,7 +869,7 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     [''],
     
     // Движение товара в рублях (до СПП)
-    ['Движение товара в рублях по цене продавца с учетом согласованной скидки (до СПП)', '', '', 'Проценты'],
+    [' Движение товара в рублях по цене продавца с учетом согласованной скидки (до СПП) 					', '', '', 'Проценты'],
     
     ['Продажи до СПП',
      { f: "SUMIFS('Отчет детализации'!J:J,'Отчет детализации'!E:E,\"Продажа\",'Отчет детализации'!F:F,\"Продажа\")", z: '#,##0.00' },
@@ -1090,10 +880,10 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     ['Корректировка в продажах до СПП', { v: 0, z: '#,##0.00' }],
     ['Вся стоимость реализованного товара до СПП',
      { f: "B23-B24", z: '#,##0.00' }],
-    ['Средний чек продажи до СПП',
+    ['Средний чек продажи до СПП\n',
      { f: "B26/B14", z: '#,##0.00' }],
     ['% комиссии ВБ до СПП',
-     { f: "(B48+B42)/B26", z: '0.00%' }],
+     { f: "(B50+B51)/B26", z: '0.00%' }],
     [''],
     ['------------------------------------------'],
     [''],
@@ -1104,18 +894,18 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     ['Продажи после СПП',
      { f: "SUMIF('Отчет детализации'!E:E,\"Продажа\",'Отчет детализации'!K:K)", z: '#,##0.00' },
      'Продажа'],
-    ['Возвраты после СП',
+    ['Возвраты после СП\n',
      { f: "SUMIF('Отчет детализации'!E:E,\"Возврат\",'Отчет детализации'!K:K)", z: '#,##0.00' },
      'Возврат'],
-    ['Корректировки в продажах после СПП', '', 'непонятно'],
+    ['Корректировки в продажах после СПП\n', '', 'непонятно '],
     ['Вся стоимость реализованного товара после СПП',
-     { f: "B31-B32", z: '#,##0.00' }],
-    ['Средний чек продажи после СП',
-     { f: "B34/B14", z: '#,##0.00' }],
+     { f: "B32-B33", z: '#,##0.00' }],
+    ['Средний чек продажи после СП\n',
+     { f: "B35/B14", z: '#,##0.00' }],
     ['Сумма СПП',
-     { f: "B26-B34+0-B42", z: '#,##0.00' }],
-    ['% СПП',
-     { f: "B36/B26", z: '0.00%' }],
+     { f: "B26-B35+0-B43", z: '#,##0.00' }],
+    ['% СПП\n',
+     { f: "B37/B26", z: '0.00%' }],
     [''],
     ['------------------------------------------'],
     [''],
@@ -1133,7 +923,7 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
      { f: "SUMIF('Отчет детализации'!E:E,\"Возврат\",'Отчет детализации'!L:L)", z: '#,##0.00' },
      'Возврат'],
     ['К перечислению за товар',
-     { f: "B43-B44", z: '#,##0.00' }],
+     { f: "B44-B45", z: '#,##0.00' }],
     [''],
     ['------------------------------------------'],
     [''],
@@ -1141,36 +931,36 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     // Статьи удержаний Вайлдберриз
     ['Статьи удержаний Вайлдберриз', '', '', 'Проценты'],
     
-        ['Плановая комиссия + эквайринг',
-     { f: "B26-B45", z: '#,##0.00' }],
+    ['Плановая комиссия + эквайринг',
+     { f: "B26-B46", z: '#,##0.00' }],
     ['Фактическая комиссия',
-     { f: "B34-B45", z: '#,##0.00' }],
+     { f: "B35-B46", z: '#,##0.00' }],
     ['Стоимость логистики',
      { f: "SUM('Отчет детализации'!O:O)", z: '#,##0.00' }],
-    ['Логистика на единицу товар',
-     { f: "B52/B14", z: '#,##0.00' }],
+    ['Логистика на единицу товар\n',
+     { f: "B53/B14", z: '#,##0.00' }],
     ['% логистики от реализациии до СПП',
-     { f: "B52/B26", z: '0.00%' }],
+     { f: "B53/B26", z: '0.00%' }],
     ['Штрафы',
      { f: "SUM('Отчет детализации'!P:P)", z: '#,##0.00' }],
     ['Доплаты', { v: 0, z: '#,##0.00' }],
     ['Хранение',
      { f: "SUM('Отчет детализации'!AB:AB)", z: '#,##0.00' }],
     ['% хранения от реализациии до СПП',
-     { f: "B57/B26", z: '0.00%' }],
+     { f: "B58/B26", z: '0.00%' }],
     ['Платная приемка',
      { f: "SUM('Отчет детализации'!AD:AD)", z: '#,##0.00' }],
-    ['"Реклама баланс + счет"',
+    ['""Реклама \nбаланс + счет""',
      { f: "SUMIF('Отчет детализации'!R:R,\"Оказание услуг «ВБ.Продвижение»\",'Отчет детализации'!AC:AC)", z: '#,##0.00' },
      'Оказание услуг «ВБ.Продвижение»'],
     ['% ДРР (доля рекламных расходов) от реализациии до СПП',
-     { f: "B60/B14", z: '#,##0.00' }],
-    ['% ДРР (доля рекламных расходов) от реализациии до СПП',
-     { f: "B60/B26", z: '0.00%' }],
+     { f: "B61/B14", z: '#,##0.00' }],
+    ['% ДРР (доля рекламных расходов) от реализациии до СПП\n',
+     { f: "B61/B26", z: '0.00%' }],
     ['ИМИЗР (использование механик искуственного завышения рейтинга)', { v: 0, z: '#,##0.00' }],
     ['Отзывы', { v: 0, z: '#,##0.00' }],
     ['Кредит',
-     { f: "SUM(B65:B66)", z: '#,##0.00' }],
+     { f: "B66+B67", z: '#,##0.00' }],
     ['Тело кредита',
      { f: "SUMIF('Отчет детализации'!R:R,\"*Перевод на баланс заёмщика для оплаты основного долга по кредиту*\",'Отчет детализации'!AC:AC)", z: '#,##0.00' }],
     ['Процент кредита',
@@ -1178,26 +968,26 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     ['% кредита от реализациии до СПП',
      { f: "B66/B26", z: '0.00%' }],
     ['Прочие удержания',
-     { f: "SUM('Отчет детализации'!AC:AC)-B66-B65-B60", z: '#,##0.00' }],
+     { f: "SUM('Отчет детализации'!AC:AC)-B66-B67-B61", z: '#,##0.00' }],
     ['% прочих удержаний от реализациии до СПП',
-     { f: "B68/B26", z: '0.00%' }],
+     { f: "B70/B26", z: '0.00%' }],
     ['Итого стоимость всех услуг ВБ от реализации до СПП',
-     { f: "B68+B66+B65+B60+B59+B57+B63+B64+B55+B52+B50", z: '#,##0.00' }],
+     { f: "B70+B66+B67+B61+B60+B58+B64+B65+B56+B53+B51", z: '#,##0.00' }],
     ['% всех услуг ВБ от реализации до СПП',
-     { f: "B70/B26", z: '0.00%' },
+     { f: "B72/B26", z: '0.00%' },
      'так как у меня есть тело и процент кредита, надо их отделить и правильно считать процент услуг ВБ'],
     ['% всех услуг ВБ от реализации после СПП',
-     { f: "(B64+B60+B59+B57+B55+B52+B51+B64+B63+B56)/B34", z: '0.00%' }],
+     { f: "(B65+B61+B60+B58+B56+B53+B52+B65+B64+B57)/B35", z: '0.00%' }],
     [''],
     ['------------------------------------------'],
     [''],
     
     // Перечисления, проверка расчетов
-    ['Перечисления, проверка расчетов'],
+    ['Перечисления, проверка расчетов				'],
     ['Итого к оплате',
-     { f: "B34-B51-B52-B55-B56-B57-B59-B60-B63-B64-B64", z: '#,##0.00' }],
+     { f: "B35-B52-B53-B56-B57-B58-B60-B61-B64-B65", z: '#,##0.00' }],
     ['Итого к оплате на единицу товара',
-     { f: "B76/B14", z: '#,##0.00' }]
+     { f: "B77/B14", z: '#,##0.00' }]
   ]);
   
   // Настройка ширины колонок для аналитического листа
@@ -1212,110 +1002,77 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
   XLSX.utils.book_append_sheet(workbook, periodsSheet, "По периодам");
   console.log("✅ Аналитический лист 'По периодам' добавлен в Excel с формулами");
   
-  // Добавляем лист "Финансы РК" с данными рекламных кампаний
-  console.log(`📊 Создание листа "Финансы РК". Количество кампаний: ${campaigns.length}, финансовых записей: ${financialData.length}`);
+  console.log(`⏱️ Создание листа "По периодам" завершено за ${Date.now() - sheetsTime}ms`);
+  const formulasTime = Date.now();
+
+  // 🚀 ОПТИМИЗАЦИЯ: Создаем лист "Финансы РК" только по запросу
+  console.log(`📊 Проверка данных для листа "Финансы РК". Кампаний: ${campaigns.length}, финансовых записей: ${financialData.length}`);
   
-  if (campaigns.length > 0 && financialData.length > 0) {
-    // Получаем SKU данные для кампаний
+  if (includeFinanceSheet && campaigns.length > 0 && financialData.length > 0) {
+    console.log("🚀 Создание листа 'Финансы РК' (оптимизированная версия)...");
+    const financeStartTime = Date.now();
+    
+    // Получаем уникальные ID кампаний
     const uniqueCampaignIds = [...new Set(financialData.map(record => record.advertId))];
     console.log(`📊 Уникальных кампаний в финансовых данных: ${uniqueCampaignIds.length}`);
     
-    // Используем ExcelJS для создания листа с рекламными данными
-    const excelJSWorkbook = new ExcelJS.Workbook();
-    
-    // Переносим существующие листы из XLSX в ExcelJS с сохранением формул
-    const sheetNames = workbook.SheetNames;
-    for (const sheetName of sheetNames) {
-      const worksheet = workbook.Sheets[sheetName];
-      const excelJSSheet = excelJSWorkbook.addWorksheet(sheetName);
-      
-      // Получаем диапазон листа
-      const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:A1');
-      
-      // Переносим каждую ячейку с сохранением формул
-      for (let R = range.s.r; R <= range.e.r; ++R) {
-        for (let C = range.s.c; C <= range.e.c; ++C) {
-          const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
-          const cell = worksheet[cellAddress];
-          
-          if (cell) {
-            const excelCell = excelJSSheet.getCell(R + 1, C + 1);
-            
-            // Проверяем, есть ли формула
-            if (cell.f) {
-              excelCell.value = { formula: cell.f };
-              if (cell.z) {
-                excelCell.numFmt = cell.z;
-              }
-            } else if (cell.v !== undefined) {
-              excelCell.value = cell.v;
-              if (cell.z) {
-                excelCell.numFmt = cell.z;
-              }
-            }
-          }
-        }
-      }
-      
-      // Копируем ширину колонок
-      if (worksheet['!cols']) {
-        excelJSSheet.columns = worksheet['!cols'].map((col: any) => ({ width: col.wch }));
-      }
-    }
-    
-    // Получаем SKU данные
+    // Получаем SKU данные (оптимизированно)
     const skuMap = await fetchCampaignSKUs(token, uniqueCampaignIds);
-    console.log(`📊 Получено SKU данных: ${skuMap.size} кампаний`);
+    console.log(`📊 Получено SKU данных: ${skuMap.size} кампаний за ${Date.now() - financeStartTime}ms`);
     
-    // Сопоставляем SKU данные с финансовыми записями
-    const financialDataWithSKU = financialData.map(record => ({
-      ...record,
-      sku: skuMap.get(record.advertId) || ''
-    }));
-    
-    // Создаем лист "Финансы РК"
-    const financeSheet = excelJSWorkbook.addWorksheet('Финансы РК');
-    financeSheet.columns = [
-      { header: 'ID кампании', key: 'advertId', width: 15 },
-      { header: 'Название кампании', key: 'campaignName', width: 30 },
-      { header: 'SKU ID', key: 'sku', width: 15 },
-      { header: 'Дата', key: 'date', width: 15 },
-      { header: 'Сумма', key: 'sum', width: 15 },
-      { header: 'Источник списания', key: 'bill', width: 20 },
-      { header: 'Тип операции', key: 'type', width: 15 },
-      { header: 'Номер документа', key: 'docNumber', width: 20 }
-    ];
-
     // Создаем карту кампаний для быстрого поиска
     const campaignMap = new Map(campaigns.map(c => [c.advertId, c]));
     
-    // Добавляем данные в лист
-    financialDataWithSKU.forEach(record => {
+    // Подготавливаем данные для листа "Финансы РК"
+    const financeExcelData = financialData.map(record => {
       const campaign = campaignMap.get(record.advertId);
-      financeSheet.addRow({
-        advertId: record.advertId,
-        campaignName: campaign?.name || 'Неизвестная кампания',
-        sku: record.sku || '',
-        date: record.date,
-        sum: record.sum,
-        bill: record.bill === 1 ? 'Счет' : 'Баланс',
-        type: record.type,
-        docNumber: record.docNumber
-      });
+      return {
+        "ID кампании": record.advertId,
+        "Название кампании": campaign?.name || 'Неизвестная кампания',
+        "SKU ID": skuMap.get(record.advertId) || '',
+        "Дата": record.date,
+        "Сумма": record.sum,
+        "Источник списания": record.bill === 1 ? 'Счет' : 'Баланс',
+        "Тип операции": record.type,
+        "Номер документа": record.docNumber
+      };
     });
     
-    console.log(`✅ Лист "Финансы РК" создан с ${financialDataWithSKU.length} записями`);
+    // Создаем лист "Финансы РК" через обычный XLSX
+    const financeSheet = XLSX.utils.json_to_sheet(financeExcelData);
     
-    // Конвертируем ExcelJS в Buffer
-    const buffer = await excelJSWorkbook.xlsx.writeBuffer();
-    return Buffer.from(buffer);
+    // Настройка ширины колонок для листа "Финансы РК"
+    const financeColumnWidths = [
+      { wch: 15 }, // ID кампании
+      { wch: 30 }, // Название кампании
+      { wch: 15 }, // SKU ID
+      { wch: 15 }, // Дата
+      { wch: 15 }, // Сумма
+      { wch: 20 }, // Источник списания
+      { wch: 15 }, // Тип операции
+      { wch: 20 }, // Номер документа
+    ];
+    financeSheet['!cols'] = financeColumnWidths;
+    
+    XLSX.utils.book_append_sheet(workbook, financeSheet, "Финансы РК");
+    console.log(`✅ Лист "Финансы РК" создан за ${Date.now() - financeStartTime}ms с ${financeExcelData.length} записями`);
+    
+  } else if (campaigns.length > 0 && financialData.length > 0) {
+    console.log("⚠️ Найдены данные для листа 'Финансы РК', но он отключен для оптимизации производительности");
+    console.log("💡 Для включения листа 'Финансы РК' передайте параметр includeFinanceSheet: true");
   } else {
-    console.log("⚠️ Нет данных для создания листа 'Финансы РК', используем стандартный Excel");
-    
-    // Конвертируем в Buffer
-    const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
-    return excelBuffer;
+    console.log("ℹ️ Нет данных для создания листа 'Финансы РК'");
   }
+
+  // Конвертируем в Buffer (быстрая операция)
+  console.log("🔄 Конвертация в Excel Buffer...");
+  const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  
+  const totalTime = Date.now() - startTime;
+  console.log(`✅ Excel отчет создан за ${totalTime}ms. Размер: ${(excelBuffer.length / 1024).toFixed(2)} KB`);
+  console.log(`📊 Время по этапам: подготовка ${dataTime - startTime}ms, листы ${sheetsTime - dataTime}ms, формулы ${formulasTime - sheetsTime}ms, конвертация ${Date.now() - formulasTime}ms`);
+  
+  return excelBuffer;
 }
 
 // Функция очистки названия кампании от эмодзи
