@@ -55,15 +55,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Проверка на наличие недопустимых символов
-    const tokenPattern = /^[a-zA-Z0-9\-_.]+$/;
-    if (!tokenPattern.test(token)) {
-      console.error("❌ Токен содержит недопустимые символы");
-      return NextResponse.json(
-        { error: "Токен содержит недопустимые символы. Используйте только буквы, цифры, дефисы и подчеркивания." },
-        { status: 400 }
-      );
-    }
+    // Убираем проверку символов - API Wildberries сам валидирует токен
 
     // Валидация дат
     const start = new Date(startDate);
