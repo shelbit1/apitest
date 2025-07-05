@@ -7,6 +7,7 @@ interface AllWebData {
   "Приемка": any[];
   "Реклама": any[];
   "Мои товары": any[];
+  "По товарам": any[];
   "По периодам": any;
 }
 
@@ -81,6 +82,7 @@ export async function POST(request: NextRequest) {
       "Приемка": formatAcceptanceData(acceptanceData || []),
       "Реклама": formatAdvertData(advertData || []),
       "Мои товары": formatProductsData(productsData || {}),
+      "По товарам": createProductAnalyticsForWeb(realizationData || [], storageData || []),
       "По периодам": calculatePeriodsData(realizationData || [])
     };
 
@@ -871,6 +873,75 @@ function calculatePeriodsData(data: any[]) {
       value: B67_finalPaymentPerUnit
     }
   };
+}
+
+// Функция для создания аналитических данных по товарам для веб-версии
+function createProductAnalyticsForWeb(realizationData: any[], storageData: any[]) {
+  console.log("📊 Создание аналитических данных по товарам для веб-версии...");
+  
+  // Группируем данные реализации по артикулу продавца
+  const productGroups = new Map<string, any[]>();
+  
+  for (const item of realizationData) {
+    const vendorCode = item.sa_name || '';
+    if (!vendorCode) continue;
+    
+    if (!productGroups.has(vendorCode)) {
+      productGroups.set(vendorCode, []);
+    }
+    productGroups.get(vendorCode)!.push(item);
+  }
+
+  const analyticsData: any[] = [];
+  
+  for (const [vendorCode, items] of productGroups) {
+    // Получаем основные данные товара
+    const firstItem = items[0];
+    const nmId = firstItem.nm_id || '';
+    
+    // Подсчитываем основные метрики
+    const deliveries = items.reduce((sum, item) => sum + (item.delivery_amount || 0), 0);
+    const sales = items.filter(item => item.doc_type_name === "Продажа").length;
+    const refunds = items.filter(item => item.doc_type_name === "Возврат").length;
+    const corrections = items.filter(item => item.doc_type_name === "Корректировка").length;
+    
+    // Расчеты сумм
+    const totalBeforeSPP = items.reduce((sum, item) => sum + (item.retail_price_withdisc_rub || 0), 0);
+    const totalAfterSPP = items.reduce((sum, item) => sum + (item.ppvz_for_pay || 0), 0);
+    const logistics = items.reduce((sum, item) => sum + (item.delivery_rub || 0), 0);
+    const storage = items.reduce((sum, item) => sum + (item.storage_fee || 0), 0);
+    const commission = totalBeforeSPP - totalAfterSPP;
+    const penalties = items.reduce((sum, item) => sum + (item.penalty || 0), 0);
+    
+    // Процентные расчеты
+    const refundRate = deliveries > 0 ? (refunds / deliveries * 100) : 0;
+    const marginAmount = totalAfterSPP - logistics - storage - penalties;
+    const marginPercent = totalAfterSPP > 0 ? (marginAmount / totalAfterSPP * 100) : 0;
+    
+    // Создаем упрощенную строку аналитики для веб-версии
+    const analyticsRow = {
+      "Артикул ВБ": nmId,
+      "Артикул продавца": vendorCode,
+      "Доставки": deliveries,
+      "Продажи": sales,
+      "Возвраты": refunds,
+      "% возвратов": refundRate.toFixed(2) + '%',
+      "Реализовано": sales - refunds,
+      "Выручка до СПП": totalBeforeSPP.toFixed(2),
+      "Выручка после СПП": totalAfterSPP.toFixed(2),
+      "Комиссия WB": commission.toFixed(2),
+      "Логистика": logistics.toFixed(2),
+      "Хранение": storage.toFixed(2),
+      "Штрафы": penalties.toFixed(2),
+      "Маржа": marginAmount.toFixed(2),
+      "% маржи": marginPercent.toFixed(2) + '%'
+    };
+    
+    analyticsData.push(analyticsRow);
+  }
+  
+  console.log(`✅ Создано ${analyticsData.length} строк аналитики по товарам для веб-версии`);
+  return analyticsData;
 }
 
 export async function GET() {
