@@ -86,16 +86,17 @@ export async function POST(request: NextRequest) {
     // Получаем основные данные реализации
     console.log("📊 1/3 Получение данных реализации...");
     
-    // Формируем URL без кодирования токена (может ломать специальные символы)
-    const apiUrl = `https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod?dateFrom=${startDate}&dateTo=${endDate}&key=${token}`;
+    // Формируем URL и отправляем токен в заголовке Authorization
+    const apiUrl = `https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod?dateFrom=${startDate}&dateTo=${endDate}`;
     
-    console.log(`📡 URL запроса реализации: ${apiUrl.replace(token, token.substring(0, 20) + '...')}`);
+    console.log(`📡 URL запроса реализации: ${apiUrl}`);
     console.log(`🔑 Начало токена: ${token.substring(0, 30)}...`);
     console.log(`⏰ Время запроса: ${new Date().toISOString()}`);
     
     const response = await fetch(apiUrl, {
       method: 'GET',
       headers: {
+        'Authorization': token,
         'User-Agent': 'Mozilla/5.0 (compatible; WB-API-Client/1.0)',
         'Accept': 'application/json',
         'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
@@ -107,141 +108,7 @@ export async function POST(request: NextRequest) {
     console.log(`📊 Content-Type: ${response.headers.get('content-type')}`);
     console.log(`📊 Response Size: ${response.headers.get('content-length')} bytes`);
     
-    if (!response.ok && response.status === 401) {
-      console.log("🔄 Ошибка 401 с query параметром. Пробуем Authorization заголовок...");
-      
-      // Пробуем альтернативный способ авторизации через заголовок
-      const alternativeUrl = `https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod?dateFrom=${startDate}&dateTo=${endDate}`;
-      
-      const alternativeResponse = await fetch(alternativeUrl, {
-        method: "GET",
-        headers: {
-          "Authorization": token.startsWith('Bearer ') ? token : `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      });
-      
-      console.log(`📊 Альтернативный ответ: ${alternativeResponse.status} ${alternativeResponse.statusText}`);
-      
-      if (alternativeResponse.ok) {
-        console.log("✅ Альтернативная авторизация сработала!");
-        const data = await alternativeResponse.json();
-        console.log(`✅ Получено ${data.length} записей реализации через Authorization заголовок`);
-        
-        // Продолжаем с полученными данными
-        if (!Array.isArray(data) || data.length === 0) {
-          console.warn("⚠️ Нет данных реализации за указанный период");
-        }
-
-        // Параллельно получаем данные о хранении, приемке, товарах, платежах и себестоимости
-        console.log("📊 2/3 Параллельное получение данных хранения, приемки, товаров, платежей и себестоимости...");
-        const [storageData, acceptanceData, productsData, paymentsData, campaigns, financialData, costPriceData] = await Promise.all([
-          getStorageData(token, startDate, endDate),
-          getAcceptanceData(token, startDate, endDate),
-          getProductsData(token),
-          getPaymentsData(token, startDate, endDate),
-          fetchCampaigns(token),
-          fetchFinancialData(token, startDate, endDate),
-          getCostPriceData(token, costPricesData || {})
-        ]);
-
-        console.log(`📦 Итого получено:`);
-        console.log(`  - Реализация: ${data.length} записей`);
-        console.log(`  - Хранение: ${storageData.length} записей`);
-        console.log(`  - Приемка: ${acceptanceData.length} записей`);
-        console.log(`  - Товары: ${productsData.length} записей`);
-        console.log(`  - Пополнения: ${paymentsData.length} записей`);
-        console.log(`  - Кампании: ${campaigns.length} записей`);
-        console.log(`  - Финансы кампаний: ${financialData.length} записей`);
-        console.log(`  - Себестоимость: ${costPriceData.length} записей`);
-
-        // Создаем аналитические данные по товарам
-        console.log("📊 3/3 Создание аналитических данных по товарам...");
-        const productAnalyticsData = await createProductAnalyticsData(data, storageData, costPriceData, financialData);
-        
-        // Создаем Excel файл
-        console.log("📊 3/3 Создание Excel отчета...");
-        const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, token);
-        console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
-
-        return new NextResponse(buffer, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "Content-Disposition": `attachment; filename="wildberries_full_report_${startDate}_${endDate}.xlsx"`,
-            "Content-Length": buffer.length.toString(),
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-          },
-        });
-      }
-      
-      // Если и альтернативный способ не сработал, пробуем без Bearer префикса
-      const thirdAttemptResponse = await fetch(alternativeUrl, {
-        method: "GET",
-        headers: {
-          "Authorization": token,
-          "Content-Type": "application/json",
-        },
-      });
-      
-      console.log(`📊 Третья попытка (без Bearer): ${thirdAttemptResponse.status} ${thirdAttemptResponse.statusText}`);
-      
-      if (thirdAttemptResponse.ok) {
-        console.log("✅ Авторизация без Bearer префикса сработала!");
-        const data = await thirdAttemptResponse.json();
-        console.log(`✅ Получено ${data.length} записей реализации`);
-        
-        // Аналогично продолжаем...
-        if (!Array.isArray(data) || data.length === 0) {
-          console.warn("⚠️ Нет данных реализации за указанный период");
-        }
-
-        // Параллельно получаем данные о хранении, приемке, товарах, платежах и себестоимости
-        console.log("📊 2/3 Параллельное получение данных хранения, приемки, товаров, платежей и себестоимости...");
-        const [storageData, acceptanceData, productsData, paymentsData, campaigns, financialData, costPriceData] = await Promise.all([
-          getStorageData(token, startDate, endDate),
-          getAcceptanceData(token, startDate, endDate),
-          getProductsData(token),
-          getPaymentsData(token, startDate, endDate),
-          fetchCampaigns(token),
-          fetchFinancialData(token, startDate, endDate),
-          getCostPriceData(token, costPricesData || {})
-        ]);
-
-        console.log(`📦 Итого получено:`);
-        console.log(`  - Реализация: ${data.length} записей`);
-        console.log(`  - Хранение: ${storageData.length} записей`);
-        console.log(`  - Приемка: ${acceptanceData.length} записей`);
-        console.log(`  - Товары: ${productsData.length} записей`);
-        console.log(`  - Пополнения: ${paymentsData.length} записей`);
-        console.log(`  - Кампании: ${campaigns.length} записей`);
-        console.log(`  - Финансы кампаний: ${financialData.length} записей`);
-        console.log(`  - Себестоимость: ${costPriceData.length} записей`);
-
-        // Создаем аналитические данные по товарам
-        console.log("📊 3/3 Создание аналитических данных по товарам...");
-        const productAnalyticsData = await createProductAnalyticsData(data, storageData, costPriceData, financialData);
-        
-        // Создаем Excel файл
-        console.log("📊 3/3 Создание Excel отчета...");
-        const buffer = await createExcelReport(data, storageData, acceptanceData, [], productsData, paymentsData, campaigns, financialData, costPriceData, productAnalyticsData, startDate, endDate, token);
-        console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
-
-        return new NextResponse(buffer, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "Content-Disposition": `attachment; filename="wildberries_full_report_${startDate}_${endDate}.xlsx"`,
-            "Content-Length": buffer.length.toString(),
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-          },
-        });
-      }
-    }
+    // Убираем дублирующую логику альтернативной авторизации
     
     if (!response.ok) {
       console.error(`❌ Ошибка API реализации: ${response.status} ${response.statusText}`);
@@ -425,7 +292,7 @@ async function fetchCampaigns(apiKey: string): Promise<Campaign[]> {
     const response = await fetch('https://advert-api.wildberries.ru/adv/v1/promotion/count', {
       method: 'GET',
       headers: {
-        'Authorization': apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`,
+        'Authorization': apiKey,
         'Content-Type': 'application/json'
       }
     });
@@ -481,7 +348,7 @@ async function fetchFinancialData(apiKey: string, startDate: string, endDate: st
     const response = await fetch(`https://advert-api.wildberries.ru/adv/v1/upd?from=${adjustedStartDate}&to=${adjustedEndDate}`, {
       method: 'GET',
       headers: {
-        'Authorization': apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`,
+        'Authorization': apiKey,
         'Content-Type': 'application/json'
       }
     });
@@ -586,7 +453,7 @@ async function fetchCampaignSKUs(apiKey: string, campaignIds: number[]): Promise
         const response = await fetch('https://advert-api.wildberries.ru/adv/v1/promotion/adverts', {
           method: 'POST',
           headers: {
-            'Authorization': apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`,
+            'Authorization': apiKey,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(batch)
