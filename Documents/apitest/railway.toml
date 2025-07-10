@@ -1,0 +1,19 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+numReplicas = 1
+restartPolicyType = "always"
+
+[services.web]
+source = "."
+buildCommand = "npm ci && npm run build"
+startCommand = "npm start"
+
+[services.web.healthcheck]
+path = "/"
+port = 3000
+
+[services.web.variables]
+NODE_ENV = "production"
+PORT = "3000" 
