@@ -1380,14 +1380,27 @@ async function getStorageData(token: string, startDate: string, endDate: string)
 
       if (downloadResponse.ok) {
         const responseText = await downloadResponse.text();
-        console.log(`📄 Сырой ответ загрузки хранения:`, responseText.substring(0, 500) + "...");
+        console.log(`📄 Сырой ответ загрузки хранения (длина: ${responseText.length}):`, responseText.substring(0, 500) + "...");
+        
+        // Дополнительные проверки перед парсингом JSON
+        if (!responseText || responseText.trim().length === 0) {
+          console.warn("⚠️ API хранения вернул пустой ответ");
+          return [];
+        }
+        
+        const trimmedResponse = responseText.trim();
+        if (!trimmedResponse.startsWith('{') && !trimmedResponse.startsWith('[')) {
+          console.warn("⚠️ API хранения вернул не-JSON ответ:", trimmedResponse.substring(0, 100));
+          return [];
+        }
         
         let storageData;
         try {
           storageData = JSON.parse(responseText);
         } catch (parseError) {
           console.error("❌ Ошибка парсинга JSON хранения:", parseError);
-          console.log("📄 Полный ответ:", responseText);
+          console.log("📄 Полный ответ для отладки:", responseText);
+          console.log("📏 Длина ответа:", responseText.length);
           return [];
         }
         
@@ -1485,14 +1498,27 @@ async function getAdvertData(token: string, startDate: string, endDate: string) 
     }
 
     const responseText = await response.text();
-    console.log(`📄 Сырой ответ API рекламы:`, responseText.substring(0, 500) + "...");
+    console.log(`📄 Сырой ответ API рекламы (длина: ${responseText.length}):`, responseText.substring(0, 500) + "...");
+    
+    // Дополнительные проверки перед парсингом JSON
+    if (!responseText || responseText.trim().length === 0) {
+      console.warn("⚠️ API рекламы вернул пустой ответ");
+      return [];
+    }
+    
+    const trimmedResponse = responseText.trim();
+    if (!trimmedResponse.startsWith('{') && !trimmedResponse.startsWith('[')) {
+      console.warn("⚠️ API рекламы вернул не-JSON ответ:", trimmedResponse.substring(0, 100));
+      return [];
+    }
     
     let advertData;
     try {
       advertData = JSON.parse(responseText);
     } catch (parseError) {
       console.error("❌ Ошибка парсинга JSON рекламы:", parseError);
-      console.log("📄 Полный ответ:", responseText);
+      console.log("📄 Полный ответ для отладки:", responseText);
+      console.log("📏 Длина ответа:", responseText.length);
       return [];
     }
     
@@ -1562,14 +1588,27 @@ async function getProductsData(token: string) {
     }
 
     const responseText = await response.text();
-    console.log(`📄 Сырой ответ API карточек товаров:`, responseText.substring(0, 500) + "...");
+    console.log(`📄 Сырой ответ API карточек товаров (длина: ${responseText.length}):`, responseText.substring(0, 500) + "...");
+    
+    // Дополнительные проверки перед парсингом JSON
+    if (!responseText || responseText.trim().length === 0) {
+      console.warn("⚠️ API карточек товаров вернул пустой ответ");
+      return [];
+    }
+    
+    const trimmedResponse = responseText.trim();
+    if (!trimmedResponse.startsWith('{') && !trimmedResponse.startsWith('[')) {
+      console.warn("⚠️ API карточек товаров вернул не-JSON ответ:", trimmedResponse.substring(0, 100));
+      return [];
+    }
     
     let cardsResponse;
     try {
       cardsResponse = JSON.parse(responseText);
     } catch (parseError) {
       console.error("❌ Ошибка парсинга JSON карточек товаров:", parseError);
-      console.log("📄 Полный ответ:", responseText);
+      console.log("📄 Полный ответ для отладки:", responseText);
+      console.log("📏 Длина ответа:", responseText.length);
       return [];
     }
     
@@ -1644,14 +1683,30 @@ async function getPaymentsData(token: string, startDate: string, endDate: string
     }
 
     const responseText = await response.text();
-    console.log(`📄 Сырой ответ API пополнений:`, responseText.substring(0, 500) + "...");
+    console.log(`📄 Сырой ответ API пополнений (длина: ${responseText.length}):`, responseText.substring(0, 500) + "...");
+    
+    // Дополнительные проверки перед парсингом JSON
+    if (!responseText || responseText.trim().length === 0) {
+      console.warn("⚠️ API пополнений вернул пустой ответ");
+      return [];
+    }
+    
+    // Проверяем что ответ начинается с { или [
+    const trimmedResponse = responseText.trim();
+    if (!trimmedResponse.startsWith('{') && !trimmedResponse.startsWith('[')) {
+      console.warn("⚠️ API пополнений вернул не-JSON ответ:", trimmedResponse.substring(0, 100));
+      return [];
+    }
     
     let paymentsData;
     try {
       paymentsData = JSON.parse(responseText);
     } catch (parseError) {
       console.error("❌ Ошибка парсинга JSON пополнений:", parseError);
-      console.log("📄 Полный ответ:", responseText);
+      console.log("📄 Полный ответ для отладки:", responseText);
+      console.log("📏 Длина ответа:", responseText.length);
+      console.log("🔤 Первые 100 символов:", responseText.substring(0, 100));
+      console.log("🔤 Последние 100 символов:", responseText.substring(-100));
       return [];
     }
     
