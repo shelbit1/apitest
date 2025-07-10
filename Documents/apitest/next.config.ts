@@ -5,8 +5,7 @@ const nextConfig: NextConfig = {
   experimental: {
     // Исправляет проблемы с native dependencies при деплое
   },
-  // Настройки для production деплоя
-  output: 'standalone',
+  // Настройки для production деплоя (standalone не нужен для Railway)
   
   // Правильное расположение serverExternalPackages
   serverExternalPackages: ['lightningcss'],
