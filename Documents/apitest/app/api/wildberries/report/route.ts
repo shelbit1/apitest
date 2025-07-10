@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import * as ExcelJS from "exceljs";
 import { validateWildberriesToken } from "../../../lib/wildberries-api";
-import { createExcelReport as createExcelReportFromLib, addPeriodsSheet } from "../../../lib/excel-generator";
+import { createExcelReport as createExcelReportFromLib } from "../../../lib/excel-generator";
 import { addDays, formatDate, mapCampaignType, mapCampaignStatus } from "../../../lib/data-mappers";
 import * as path from "path";
-import { addPeriodsSheetFromTemplate } from "../../../lib/excel-generator";
 
 // Интерфейсы для рекламных кампаний
 interface Campaign {
@@ -817,12 +816,6 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
   
   // Добавляем лист в книгу
   XLSX.utils.book_append_sheet(workbook, worksheet, "Отчет детализации");
-  // Добавляем лист "По периодам" из шаблона, если возможно, иначе генерируем
-  const templatePath = path.join(process.cwd(), "test", "ИСХОДНИК Оцифровка OCIFRON 16-06 по 22-06.xlsx");
-  const addedFromTpl = addPeriodsSheetFromTemplate(workbook, templatePath, startDate, endDate);
-  if (!addedFromTpl) {
-    addPeriodsSheet(workbook, startDate, endDate);
-  }
   
   // Добавляем лист с данными о хранении (только если есть данные)
   console.log(`📊 Создание листа хранения. Количество записей: ${storageData?.length || 0}`);
