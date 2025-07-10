@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import * as ExcelJS from "exceljs";
 import { validateWildberriesToken } from "../../../lib/wildberries-api";
-import { createExcelReport as createExcelReportFromLib } from "../../../lib/excel-generator";
+import { createExcelReport as createExcelReportFromLib, addPeriodsSheet } from "../../../lib/excel-generator";
 import { addDays, formatDate, mapCampaignType, mapCampaignStatus } from "../../../lib/data-mappers";
+import * as path from "path";
+import { addPeriodsSheetFromTemplate } from "../../../lib/excel-generator";
 
 // Интерфейсы для рекламных кампаний
 interface Campaign {
@@ -177,15 +179,34 @@ export async function POST(request: NextRequest) {
     }
 
     // Параллельно получаем данные о хранении, приемке, товарах, платежах и себестоимости
-    console.log("📊 2/2 Параллельное получение данных хранения, приемки, платежей и себестоимости...");
-    const [storageData, acceptanceData, paymentsData, campaigns, financialData, costPriceData] = await Promise.all([
+    console.log("📊 2/3 Параллельное получение данных хранения, приемки, платежей и себестоимости...");
+    const [storageData, acceptanceData, paymentsData, campaigns, financialData] = await Promise.all([
       getStorageData(cleanToken, startDate, endDate),
       getAcceptanceData(cleanToken, startDate, endDate),
       getPaymentsData(cleanToken, startDate, endDate),
       fetchCampaigns(cleanToken),
-      fetchFinancialData(cleanToken, startDate, endDate),
-      getCostPriceData(cleanToken, costPricesData || {})
+      fetchFinancialData(cleanToken, startDate, endDate)
     ]);
+
+    // Получаем данные себестоимости, включая товары из реализации
+    console.log("📊 Получение данных себестоимости с дополнением из реализации...");
+    const costPriceData = await getCostPriceData(cleanToken, costPricesData || {}, data);
+
+    // Получаем SKU данные для финансовых записей (если есть кампании и финансовые данные)
+    console.log("📊 3/3 Получение SKU данных для листа 'Финансы РК'...");
+    let skuMap = new Map<number, string>();
+    if (campaigns.length > 0 && financialData.length > 0) {
+      const uniqueCampaignIds = [...new Set(financialData.map(record => record.advertId))];
+      console.log(`📊 Получение SKU для ${uniqueCampaignIds.length} уникальных кампаний...`);
+      
+      try {
+        skuMap = await fetchCampaignSKUs(cleanToken, uniqueCampaignIds);
+        console.log(`✅ Получено SKU данных: ${skuMap.size} кампаний`);
+      } catch (error) {
+        console.error(`❌ Ошибка получения SKU данных:`, error);
+        console.log("ℹ️ Лист 'Финансы РК' будет создан без SKU ID");
+      }
+    }
 
     console.log(`📦 Итого получено:`);
     console.log(`  - Реализация: ${data.length} записей`);
@@ -200,7 +221,7 @@ export async function POST(request: NextRequest) {
     
     // Создаем Excel файл
     console.log("📊 Создание Excel отчета...");
-    const buffer = await createExcelReport(data, storageData, acceptanceData, [], paymentsData, campaigns, financialData, costPriceData, startDate, endDate, cleanToken);
+    const buffer = await createExcelReport(data, storageData, acceptanceData, [], paymentsData, campaigns, financialData, costPriceData, startDate, endDate, cleanToken, skuMap);
 
     console.log(`✅ Excel отчет создан. Размер: ${(buffer.length / 1024).toFixed(2)} KB`);
 
@@ -253,6 +274,147 @@ export async function POST(request: NextRequest) {
       { status: statusCode }
     );
   }
+}
+
+// Функция для добавления листа "Полный отчет" с разделением по realizationreport_id
+function addFullReportSheet(workbook: XLSX.WorkBook, data: any[]) {
+  console.log("📊 Создание листа 'Полный отчет' с разделением по realizationreport_id...");
+  
+  // Группируем данные по realizationreport_id
+  const reportGroups: { [key: string]: any[] } = {};
+  
+  data.forEach(item => {
+    const reportId = item.realizationreport_id || 'Без ID';
+    if (!reportGroups[reportId]) {
+      reportGroups[reportId] = [];
+    }
+    reportGroups[reportId].push(item);
+  });
+  
+  console.log(`📋 Найдено ${Object.keys(reportGroups).length} уникальных отчетов реализации`);
+  
+  // Создаем массив данных для Excel с разделительными строками
+  const fullReportData: any[] = [];
+  
+  Object.keys(reportGroups).forEach((reportId, index) => {
+    const group = reportGroups[reportId];
+    
+    // Добавляем заголовок группы
+    if (index > 0) {
+      // Пустая строка для разделения
+      fullReportData.push({});
+    }
+    
+    fullReportData.push({
+      "ID отчета реализации": `=== ОТЧЕТ РЕАЛИЗАЦИИ ID: ${reportId} ===`,
+      "Дата создания отчета": group[0]?.create_dt || '',
+      "Период с": group[0]?.date_from || '',
+      "Период по": group[0]?.date_to || '',
+      "Количество записей": group.length,
+      "Валюта": group[0]?.currency_name || ''
+    });
+    
+    // Добавляем пустую строку после заголовка
+    fullReportData.push({});
+    
+    // Добавляем все записи из этой группы
+    group.forEach(item => {
+      fullReportData.push({
+        "ID отчета реализации": item.realizationreport_id || "",
+        "Дата создания отчета": item.create_dt || "",
+        "Период с": item.date_from || "",
+        "Период по": item.date_to || "",
+        "Валюта": item.currency_name || "",
+        "Код договора поставщика": item.suppliercontract_code || "",
+        "ID записи": item.rrd_id || "",
+        "Номер поставки": item.gi_id || "",
+        "Процент логистики": item.dlv_prc || 0,
+        "Дата фиксации тарифа с": item.fix_tariff_date_from || "",
+        "Дата фиксации тарифа по": item.fix_tariff_date_to || "",
+        "Предмет": item.subject_name || "",
+        "Артикул WB": item.nm_id || "",
+        "Бренд": item.brand_name || "",
+        "Артикул продавца": item.sa_name || "",
+        "Размер": item.ts_name || "",
+        "Баркод": item.barcode || "",
+        "Тип документа": item.doc_type_name || "",
+        "Количество": item.quantity || 0,
+        "Розничная цена": item.retail_price || 0,
+        "Сумма продаж": item.retail_amount || 0,
+        "Согласованная скидка (%)": item.sale_percent || 0,
+        "Процент комиссии": item.commission_percent || 0,
+        "Склад": item.office_name || "",
+        "Обоснование для оплаты": item.supplier_oper_name || "",
+        "Дата заказа": item.order_dt || "",
+        "Дата продажи": item.sale_dt || "",
+        "Дата отчета": item.rr_dt || "",
+        "Штрихкод": item.shk_id || "",
+        "Цена розничная с учетом согласованной скидки": item.retail_price_withdisc_rub || 0,
+        "Количество доставок": item.delivery_amount || 0,
+        "Количество возвратов": item.return_amount || 0,
+        "Стоимость логистики": item.delivery_rub || 0,
+        "Тип коробки": item.gi_box_type_name || "",
+        "Скидка товара для отчета": item.product_discount_for_report || 0,
+        "Промо от поставщика": item.supplier_promo || 0,
+        "Rid": item.rid || "",
+        "SPP процент": item.ppvz_spp_prc || 0,
+        "КВВ процент базовый": item.ppvz_kvw_prc_base || 0,
+        "КВВ процент": item.ppvz_kvw_prc || 0,
+        "Процент повышения рейтинга": item.sup_rating_prc_up || 0,
+        "Флаг KGVP v2": item.is_kgvp_v2 || 0,
+        "Комиссия за продажи": item.ppvz_sales_commission || 0,
+        "К доплате": item.ppvz_for_pay || 0,
+        "Вознаграждение": item.ppvz_reward || 0,
+        "Комиссия эквайринга": item.acquiring_fee || 0,
+        "Процент эквайринга": item.acquiring_percent || 0,
+        "Обработка платежей": item.payment_processing || "",
+        "Банк эквайринга": item.acquiring_bank || "",
+        "PPVZ VW": item.ppvz_vw || 0,
+        "PPVZ VW НДС": item.ppvz_vw_nds || 0,
+        "Название офиса PPVZ": item.ppvz_office_name || "",
+        "ID офиса PPVZ": item.ppvz_office_id || "",
+        "ID поставщика PPVZ": item.ppvz_supplier_id || "",
+        "Имя поставщика PPVZ": item.ppvz_supplier_name || "",
+        "ИНН PPVZ": item.ppvz_inn || "",
+        "Номер декларации": item.declaration_number || "",
+        "Тип бонуса": item.bonus_type_name || "",
+        "ID стикера": item.sticker_id || "",
+        "Страна сайта": item.site_country || "",
+        "Флаг DBS": item.srv_dbs ? "Да" : "Нет",
+        "Штраф": item.penalty || 0,
+        "Доплата": item.additional_payment || 0,
+        "Перерасчет логистики": item.rebill_logistic_cost || 0,
+        "Организация перерасчета": item.rebill_logistic_org || "",
+        "Стоимость хранения": item.storage_fee || 0,
+        "Удержания": item.deduction || 0,
+        "Приемка": item.acceptance || 0,
+        "ID сборочного задания": item.assembly_id || "",
+        "КИЗ": item.kiz || "",
+        "SRID": item.srid || "",
+        "Тип отчета": item.report_type || 0,
+        "Юридическое лицо": item.is_legal_entity ? "Да" : "Нет",
+        "ID TRBX": item.trbx_id || "",
+        "Сумма рассрочки": item.installment_cofinancing_amount || 0,
+        "Процент скидки WB": item.wibes_wb_discount_percent || 0
+      });
+    });
+  });
+  
+  // Создаем лист с данными
+  const fullReportSheet = XLSX.utils.json_to_sheet(fullReportData);
+  
+  // Настраиваем ширину колонок
+  const columnWidths = Array(60).fill({ wch: 15 }); // 60 колонок по 15 символов
+  fullReportSheet['!cols'] = columnWidths;
+  
+  // Добавляем лист в книгу
+  XLSX.utils.book_append_sheet(workbook, fullReportSheet, "Полный отчет");
+  
+  console.log(`✅ Лист 'Полный отчет' создан с ${fullReportData.length} строками данных`);
+  console.log(`📊 Статистика по отчетам реализации:`);
+  Object.keys(reportGroups).forEach(reportId => {
+    console.log(`   - Отчет ${reportId}: ${reportGroups[reportId].length} записей`);
+  });
 }
 
 // Функции для работы с рекламными кампаниями импортированы из data-mappers.ts
@@ -417,7 +579,14 @@ async function fetchCampaignSKUs(apiKey: string, campaignIds: number[]): Promise
     const startTime = Date.now();
     
     const skuMap = new Map<number, string>();
-    const batchSize = 100; // Увеличиваем размер батча для лучшей производительности
+    
+    // Проверяем валидность входных данных
+    if (!campaignIds || campaignIds.length === 0) {
+      console.warn('⚠️ Нет кампаний для получения SKU данных');
+      return skuMap;
+    }
+    
+    const batchSize = 50; // Уменьшаем размер батча для большей надежности
     const batches = Math.ceil(campaignIds.length / batchSize);
     
     console.log(`📦 Обработка в ${batches} батчах по ${batchSize} кампаний`);
@@ -429,16 +598,21 @@ async function fetchCampaignSKUs(apiKey: string, campaignIds: number[]): Promise
       console.log(`📤 Обработка батча ${batchNum}/${batches} (${batch.length} кампаний)`);
       const batchStartTime = Date.now();
       
+      let retryCount = 0;
+      const maxRetries = 3;
+      
+      while (retryCount < maxRetries) {
       try {
         // Добавляем таймаут для запроса
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд таймаут
+          const timeoutId = setTimeout(() => controller.abort(), 45000); // Увеличиваем таймаут до 45 секунд
         
         const response = await fetch('https://advert-api.wildberries.ru/adv/v1/promotion/adverts', {
           method: 'POST',
           headers: {
             'Authorization': apiKey,
-            'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
           },
           body: JSON.stringify(batch),
           signal: controller.signal
@@ -447,34 +621,28 @@ async function fetchCampaignSKUs(apiKey: string, campaignIds: number[]): Promise
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-          console.error(`❌ Ошибка получения SKU для батча ${batchNum}: ${response.status} ${response.statusText}`);
+            console.error(`❌ Ошибка получения SKU для батча ${batchNum} (попытка ${retryCount + 1}): ${response.status} ${response.statusText}`);
           
           // Обрабатываем ошибку 429 (Rate Limit)
           if (response.status === 429) {
-            console.warn(`⚠️ Превышен лимит запросов для батча ${batchNum}. Ожидание 1 минута...`);
-            await new Promise(resolve => setTimeout(resolve, 60000));
-            
-            // Повторяем запрос
-            const retryResponse = await fetch('https://advert-api.wildberries.ru/adv/v1/promotion/adverts', {
-              method: 'POST',
-              headers: {
-                'Authorization': apiKey,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify(batch)
-            });
-            
-            if (retryResponse.ok) {
-              const retryData = await retryResponse.json();
-              console.log(`✅ Батч ${batchNum} успешно обработан после повторной попытки`);
-              if (Array.isArray(retryData)) {
-                processSKUData(retryData, skuMap);
-              }
-            } else {
-              console.error(`❌ Повторная попытка для батча ${batchNum} не удалась: ${retryResponse.status}`);
+              const waitTime = Math.min(60000 * (retryCount + 1), 180000); // Увеличиваем время ожидания с каждой попыткой
+              console.warn(`⚠️ Превышен лимит запросов для батча ${batchNum}. Ожидание ${waitTime / 1000} секунд...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              retryCount++;
+              continue;
             }
-          }
-          continue;
+            
+            // Для других ошибок пробуем ещё раз
+            if (retryCount < maxRetries - 1) {
+              const waitTime = 5000 * (retryCount + 1); // 5, 10, 15 секунд
+              console.warn(`⚠️ Ожидание ${waitTime / 1000} секунд перед повторной попыткой...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              retryCount++;
+              continue;
+            } else {
+              console.error(`❌ Батч ${batchNum} пропущен после ${maxRetries} попыток`);
+              break;
+            }
         }
 
         const data = await response.json();
@@ -482,30 +650,50 @@ async function fetchCampaignSKUs(apiKey: string, campaignIds: number[]): Promise
         if (Array.isArray(data)) {
           processSKUData(data, skuMap);
           console.log(`✅ Батч ${batchNum} обработан за ${Date.now() - batchStartTime}ms`);
+          } else {
+            console.warn(`⚠️ Неожиданный формат ответа для батча ${batchNum}:`, typeof data);
         }
         
-        // Уменьшаем задержку между батчами
-        if (i + batchSize < campaignIds.length) {
-          await new Promise(resolve => setTimeout(resolve, 100)); // Уменьшили с 200ms до 100ms
-        }
+          break; // Успешно обработали батч, выходим из цикла retry
         
       } catch (batchError: any) {
         if (batchError.name === 'AbortError') {
-          console.error(`❌ Таймаут при обработке батча ${batchNum}`);
+            console.error(`❌ Таймаут при обработке батча ${batchNum} (попытка ${retryCount + 1})`);
         } else {
-          console.error(`❌ Ошибка при обработке батча ${batchNum}:`, batchError);
+            console.error(`❌ Ошибка при обработке батча ${batchNum} (попытка ${retryCount + 1}):`, batchError.message);
         }
+          
+          if (retryCount < maxRetries - 1) {
+            const waitTime = 5000 * (retryCount + 1);
+            console.log(`⏳ Ожидание ${waitTime / 1000} секунд перед повторной попыткой...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            retryCount++;
+          } else {
+            console.error(`❌ Батч ${batchNum} окончательно пропущен после ${maxRetries} попыток`);
+            break;
+          }
+        }
+      }
+      
+      // Добавляем паузу между батчами
+      if (i + batchSize < campaignIds.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Увеличиваем паузу до 1 секунды
       }
     }
     
     const totalTime = Date.now() - startTime;
-    console.log(`✅ Получено SKU данных: ${skuMap.size} из ${campaignIds.length} кампаний за ${totalTime}ms`);
-    console.log(`📊 Производительность: ${(campaignIds.length / totalTime * 1000).toFixed(1)} кампаний/сек`);
+    const successRate = ((skuMap.size / campaignIds.length) * 100).toFixed(1);
+    console.log(`✅ Получено SKU данных: ${skuMap.size} из ${campaignIds.length} кампаний за ${totalTime}ms (${successRate}% успешных)`);
+    
+    if (skuMap.size === 0) {
+      console.warn('⚠️ Не удалось получить ни одного SKU. Лист "Финансы РК" будет создан без SKU ID');
+    }
     
     return skuMap;
     
-  } catch (error) {
-    console.error('❌ Критическая ошибка при получении SKU данных:', error);
+  } catch (error: any) {
+    console.error('❌ Критическая ошибка при получении SKU данных:', error.message);
+    console.log('ℹ️ Возвращаем пустую карту SKU. Лист "Финансы РК" будет создан без SKU ID');
     return new Map();
   }
 }
@@ -540,7 +728,7 @@ function processSKUData(data: any[], skuMap: Map<number, string>) {
   console.log(`📊 Обработано ${processed} SKU записей в батче`);
 }
 
-async function createExcelReport(data: any[], storageData: any[], acceptanceData: any[], advertData: any[], paymentsData: any[], campaigns: Campaign[], financialData: FinancialData[], costPriceData: any[], startDate: string, endDate: string, token: string): Promise<Buffer> {
+async function createExcelReport(data: any[], storageData: any[], acceptanceData: any[], advertData: any[], paymentsData: any[], campaigns: Campaign[], financialData: FinancialData[], costPriceData: any[], startDate: string, endDate: string, token: string, skuMap: Map<number, string> = new Map()): Promise<Buffer> {
   const startTime = Date.now();
   console.log("🚀 Начинаем создание Excel отчета...");
   
@@ -629,6 +817,12 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
   
   // Добавляем лист в книгу
   XLSX.utils.book_append_sheet(workbook, worksheet, "Отчет детализации");
+  // Добавляем лист "По периодам" из шаблона, если возможно, иначе генерируем
+  const templatePath = path.join(process.cwd(), "test", "ИСХОДНИК Оцифровка OCIFRON 16-06 по 22-06.xlsx");
+  const addedFromTpl = addPeriodsSheetFromTemplate(workbook, templatePath, startDate, endDate);
+  if (!addedFromTpl) {
+    addPeriodsSheet(workbook, startDate, endDate);
+  }
   
   // Добавляем лист с данными о хранении (только если есть данные)
   console.log(`📊 Создание листа хранения. Количество записей: ${storageData?.length || 0}`);
@@ -714,6 +908,13 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
 
 
 
+  // Добавляем лист "Полный отчет" с разделением по realizationreport_id
+  console.log(`📊 Создание листа "Полный отчет". Количество записей: ${data?.length || 0}`);
+  
+  if (data && data.length > 0) {
+    addFullReportSheet(workbook, data);
+  }
+
   // Добавляем лист с данными о себестоимости (только если есть данные)
   console.log(`📊 Создание листа себестоимости. Количество записей: ${costPriceData?.length || 0}`);
   
@@ -729,6 +930,7 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
       "Себестоимость": item.costPrice || 0,
       "Маржа": item.costPrice > 0 ? (item.price - item.costPrice) : 0,
       "Рентабельность (%)": item.costPrice > 0 && item.price > 0 ? ((item.price - item.costPrice) / item.price * 100).toFixed(2) : 0,
+      "Источник данных": item.source === 'realization' ? 'Из реализации' : 'Из карточек API',
       "Дата создания": item.createdAt || "",
       "Дата обновления": item.updatedAt || ""
     }));
@@ -747,6 +949,7 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
       { wch: 15 }, // Себестоимость
       { wch: 15 }, // Маржа
       { wch: 20 }, // Рентабельность
+      { wch: 20 }, // Источник данных
       { wch: 20 }, // Дата создания
       { wch: 20 }, // Дата обновления
     ];
@@ -763,20 +966,14 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
 
   const formulasTime = Date.now();
 
-  // 🚀 Создаем лист "Финансы РК" всегда (как было изначально)
+  // 🚀 Создаем лист "Финансы РК" (SKU данные уже получены заранее)
   console.log(`📊 Проверка данных для листа "Финансы РК". Кампаний: ${campaigns.length}, финансовых записей: ${financialData.length}`);
   
   if (campaigns.length > 0 && financialData.length > 0) {
     console.log("🚀 Создание листа 'Финансы РК'...");
     const financeStartTime = Date.now();
     
-    // Получаем уникальные ID кампаний
-    const uniqueCampaignIds = [...new Set(financialData.map(record => record.advertId))];
-    console.log(`📊 Уникальных кампаний в финансовых данных: ${uniqueCampaignIds.length}`);
-    
-    // Получаем SKU данные (оптимизированно)
-    const skuMap = await fetchCampaignSKUs(token, uniqueCampaignIds);
-    console.log(`📊 Получено SKU данных: ${skuMap.size} кампаний за ${Date.now() - financeStartTime}ms`);
+    console.log(`📊 Использование готовых SKU данных: ${skuMap.size} кампаний`);
     
     // Создаем карту кампаний для быстрого поиска
     const campaignMap = new Map(campaigns.map(c => [c.advertId, c]));
@@ -1485,10 +1682,15 @@ async function getPaymentsData(token: string, startDate: string, endDate: string
   }
 }
 
-async function getCostPriceData(token: string, savedCostPrices: {[key: string]: string} = {}) {
+async function getCostPriceData(token: string, savedCostPrices: {[key: string]: string} = {}, realizationData: any[] = []) {
   try {
     console.log('💰 Получение данных себестоимости товаров');
     
+    const costPriceData: any[] = [];
+    
+    // Шаг 1: Получаем карточки товаров из API контента
+    let cards: any[] = [];
+    try {
     const requestBody = {
       settings: {
         cursor: {
@@ -1509,25 +1711,29 @@ async function getCostPriceData(token: string, savedCostPrices: {[key: string]: 
       body: JSON.stringify(requestBody)
     });
 
-    if (!response.ok) {
-      console.error(`❌ Ошибка получения карточек товаров: ${response.status} ${response.statusText}`);
-      return [];
-    }
-
+      if (response.ok) {
     const data = await response.json();
     console.log('📦 Ответ API карточек товаров:', Object.keys(data));
     
-    if (!data.cards || !Array.isArray(data.cards)) {
-      console.error('❌ Ответ API не содержит массив cards');
-      return [];
+        if (data.cards && Array.isArray(data.cards)) {
+          cards = data.cards;
+          console.log(`📦 Количество карточек из API контента: ${cards.length}`);
+        }
+      } else {
+        console.warn(`⚠️ Не удалось получить карточки товаров из API контента: ${response.status}`);
+      }
+    } catch (error) {
+      console.warn('⚠️ Ошибка при получении карточек из API контента:', error);
     }
 
-    const cards = data.cards;
-    console.log(`📦 Количество карточек: ${cards.length}`);
+    // Создаем карту существующих карточек для быстрого поиска
+    const cardsMap = new Map<string, any>();
+    cards.forEach((card: any) => {
+      cardsMap.set(card.nmID?.toString() || '', card);
+      cardsMap.set(card.vendorCode || '', card);
+    });
 
-    // Преобразуем данные, разворачивая каждый размер в отдельную строку
-    const costPriceData: any[] = [];
-    
+    // Шаг 2: Преобразуем карточки в данные себестоимости
     cards.forEach((card: any) => {
       const baseProduct = {
         nmID: card.nmID,
@@ -1584,7 +1790,60 @@ async function getCostPriceData(token: string, savedCostPrices: {[key: string]: 
       }
     });
 
-    console.log(`✅ Обработано карточек: ${cards.length}, развернуто позиций: ${costPriceData.length}`);
+    // Шаг 3: Добавляем товары из реализации, которых нет в карточках
+    console.log('📦 Добавление товаров из реализации, отсутствующих в карточках...');
+    const existingProducts = new Set();
+    costPriceData.forEach(item => {
+      existingProducts.add(`${item.nmID}-${item.barcode}`);
+      existingProducts.add(`${item.vendorCode}-${item.barcode}`);
+    });
+
+    const missingProducts = new Map<string, any>();
+    
+    realizationData.forEach((item: any) => {
+      const nmId = item.nm_id?.toString() || '';
+      const vendorCode = item.sa_name || '';
+      const barcode = item.barcode || '';
+      
+      if (!vendorCode) return; // Пропускаем товары без артикула продавца
+      
+      const productKey1 = `${nmId}-${barcode}`;
+      const productKey2 = `${vendorCode}-${barcode}`;
+      
+      // Если товара нет среди карточек, добавляем его
+      if (!existingProducts.has(productKey1) && !existingProducts.has(productKey2)) {
+        const uniqueKey = vendorCode; // Используем артикул продавца как уникальный ключ
+        
+        if (!missingProducts.has(uniqueKey)) {
+          const costKey = `${nmId}-${barcode}`;
+          const savedCostPrice = savedCostPrices[costKey] ? parseFloat(savedCostPrices[costKey]) : 0;
+          
+          missingProducts.set(uniqueKey, {
+            nmID: nmId,
+            vendorCode: vendorCode,
+            object: vendorCode, // Используем артикул как название, поскольку данных нет
+            brand: 'Неизвестный бренд',
+            sizeName: 'Размер не указан',
+            barcode: barcode,
+            price: item.retail_price_withdisc_rub || 0,
+            costPrice: savedCostPrice,
+            createdAt: '',
+            updatedAt: '',
+            source: 'realization' // Помечаем источник данных
+          });
+        }
+      }
+    });
+
+    // Добавляем отсутствующие товары
+    missingProducts.forEach((product) => {
+      costPriceData.push(product);
+    });
+
+    console.log(`✅ Обработано карточек из API: ${cards.length}`);
+    console.log(`📦 Добавлено товаров из реализации: ${missingProducts.size}`);
+    console.log(`📊 Итого позиций в листе "Себес": ${costPriceData.length}`);
+    
     return costPriceData;
   } catch (error) {
     console.error('❌ Ошибка при получении данных себестоимости:', error);

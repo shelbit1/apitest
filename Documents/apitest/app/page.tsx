@@ -29,6 +29,7 @@ export default function Home() {
   const [webData, setWebData] = useState<AllWebData | null>(null);
   const [isLoadingWebData, setIsLoadingWebData] = useState(false);
   const [activeSheet, setActiveSheet] = useState<string>("По периодам");
+  const [googleSheetsLink, setGoogleSheetsLink] = useState("");
 
 
   // Загружаем сохраненный токен при инициализации
@@ -598,6 +599,105 @@ export default function Home() {
               </div>
             </div>
           )}
+
+          {/* Блок BASIO */}
+          <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            {/* Заголовок с аватаром и иконками */}
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center">
+                  <span className="text-white font-bold text-xl">wb</span>
+                </div>
+                <h3 className="text-xl font-semibold text-gray-800">BASIO</h3>
+              </div>
+              <div className="flex items-center gap-3">
+                <button className="p-2 text-gray-500 hover:text-gray-700 transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+                <button className="p-2 text-gray-500 hover:text-gray-700 transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
+                <button className="p-2 text-gray-500 hover:text-gray-700 transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Статус подключения */}
+            <div className="mb-8">
+              <p className="text-gray-600 mb-2">Подключен:</p>
+              <p className="text-gray-800 font-semibold">19/06/2025 17:23</p>
+            </div>
+
+            {/* Поле для ссылки на Google Таблицы */}
+            <div className="mb-8">
+              {!googleSheetsLink ? (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Обратитесь к вашему менеджеру для добавления ссылки, самостоятельно добавлять ничего не надо
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={googleSheetsLink}
+                      onChange={(e) => setGoogleSheetsLink(e.target.value)}
+                      placeholder="https://docs.google.com/spreadsheets/d/..."
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    />
+                    <button
+                      onClick={() => {
+                        if (googleSheetsLink.trim()) {
+                          // Проверяем, что это валидная ссылка на Google Sheets
+                          if (googleSheetsLink.includes('docs.google.com/spreadsheets')) {
+                            alert('Ссылка на Google Таблицы добавлена!');
+                          } else {
+                            alert('Пожалуйста, введите корректную ссылку на Google Таблицы');
+                            setGoogleSheetsLink('');
+                          }
+                        }
+                      }}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                    >
+                      Добавить
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                                     <a
+                     href={googleSheetsLink}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium"
+                   >
+                     📊 ГУГЛ-ТАБЛИЦА
+                   </a>
+                  <button
+                    onClick={() => setGoogleSheetsLink('')}
+                    className="px-3 py-1 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    Удалить
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Кнопки */}
+            <div className="flex gap-4">
+              <button className="flex-1 px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors">
+                Проверить подключение
+              </button>
+              <button className="flex-1 px-6 py-3 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 transition-colors">
+                Отчет реализации
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
