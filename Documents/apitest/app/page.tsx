@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 // Интерфейсы для всех данных
 interface AllWebData {
@@ -19,6 +20,13 @@ interface AllWebData {
   };
 }
 
+interface Cabinet {
+  id: string;
+  name: string;
+  token: string;
+  createdAt: string;
+}
+
 export default function Home() {
   const [apiToken, setApiToken] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -30,14 +38,21 @@ export default function Home() {
   const [isLoadingWebData, setIsLoadingWebData] = useState(false);
   const [activeSheet, setActiveSheet] = useState<string>("По периодам");
   const [googleSheetsLink, setGoogleSheetsLink] = useState("");
+  const [selectedCabinet, setSelectedCabinet] = useState<Cabinet | null>(null);
+  const router = useRouter();
 
-
-  // Загружаем сохраненный токен при инициализации
+  // Загружаем выбранный кабинет при инициализации
   useEffect(() => {
-    const token = localStorage.getItem("wb_api_token");
-    if (token) {
-      setSavedToken(token);
-      setApiToken(token);
+    const savedCabinet = localStorage.getItem("selected-cabinet");
+    if (savedCabinet) {
+      try {
+        const cabinet = JSON.parse(savedCabinet);
+        setSelectedCabinet(cabinet);
+        setApiToken(cabinet.token);
+        setSavedToken(cabinet.token);
+      } catch (error) {
+        console.error("Ошибка загрузки кабинета:", error);
+      }
     }
   }, []);
 
@@ -52,7 +67,7 @@ export default function Home() {
     }
   };
 
-  // Удаление токена
+  // Удаление токена (legacy)
   const handleDeleteToken = () => {
     localStorage.removeItem("wb_api_token");
     setSavedToken("");
@@ -60,10 +75,24 @@ export default function Home() {
     alert("Токен удален");
   };
 
+  // Переход к управлению кабинетами
+  const goToCabinets = () => {
+    router.push('/cabinets');
+  };
+
+  // Смена кабинета
+  const changeCabinet = () => {
+    localStorage.removeItem('selected-cabinet');
+    setSelectedCabinet(null);
+    setApiToken('');
+    setSavedToken('');
+    router.push('/cabinets');
+  };
+
   // Скачивание отчета
   const handleDownloadReport = async () => {
-    if (!apiToken.trim()) {
-      alert("Введите API токен");
+    if (!selectedCabinet) {
+      alert("Выберите ВБ кабинет для создания отчета");
       return;
     }
     
@@ -99,7 +128,7 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          token: apiToken,
+          token: selectedCabinet.token,
           startDate,
           endDate,
           costPricesData,
@@ -167,10 +196,8 @@ export default function Home() {
 
   // Получение данных для веб-версии
   const handleShowWebData = async () => {
-    const currentToken = apiToken || savedToken;
-    
-    if (!currentToken?.trim()) {
-      alert("Введите API токен");
+    if (!selectedCabinet) {
+      alert("Выберите ВБ кабинет для просмотра аналитики");
       return;
     }
     
@@ -187,7 +214,7 @@ export default function Home() {
     try {
       console.log("🔍 Начинаем получение данных для веб-версии...");
       console.log("📅 Период:", { startDate, endDate });
-      console.log("🔐 Токен:", currentToken ? "✅ Есть" : "❌ Нет");
+      console.log("🔐 Кабинет:", selectedCabinet.name);
       
       setIsLoadingWebData(true);
       setWebData(null);
@@ -199,7 +226,7 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          token: currentToken,
+          token: selectedCabinet.token,
           startDate,
           endDate
         })
@@ -420,50 +447,41 @@ export default function Home() {
             📊 Wildberries Полный Отчет
           </h1>
           
-          {/* Секция API токена */}
+          {/* Секция выбора кабинета */}
           <div className="mb-8">
-            <h2 className="text-xl font-semibold text-gray-700 mb-4">🔑 API Токен</h2>
+            <h2 className="text-xl font-semibold text-gray-700 mb-4">🏢 Выбранный ВБ кабинет</h2>
             
-            {savedToken && (
-              <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-green-700 text-sm">
-                  ✅ Токен сохранен: {savedToken.substring(0, 20)}...
-                </p>
+            {selectedCabinet ? (
+              <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="font-semibold text-green-800">{selectedCabinet.name}</h3>
+                    <p className="text-green-600 text-sm">
+                      Токен: ****{selectedCabinet.token.slice(-10)}
+                    </p>
+                    <p className="text-green-500 text-xs">
+                      Добавлен: {new Date(selectedCabinet.createdAt).toLocaleDateString('ru-RU')}
+                    </p>
+                  </div>
+                  <button
+                    onClick={changeCabinet}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Сменить кабинет
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
+                <p className="text-gray-600 mb-4">Выберите ВБ кабинет для работы</p>
+                <button
+                  onClick={goToCabinets}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold"
+                >
+                  🏢 Управление кабинетами
+                </button>
               </div>
             )}
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Введите ваш API токен Wildberries
-                </label>
-                <input
-                  type="password"
-                  value={apiToken}
-                  onChange={(e) => setApiToken(e.target.value)}
-                  placeholder="eyJhbGciOiJFUzI1NiIs..."
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              
-              <div className="flex gap-3">
-                <button
-                  onClick={handleSaveToken}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                >
-                  💾 Сохранить
-                </button>
-                
-                {savedToken && (
-                  <button
-                    onClick={handleDeleteToken}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                  >
-                    🗑️ Удалить
-                  </button>
-                )}
-              </div>
-            </div>
           </div>
 
           {/* Секция периода */}
@@ -546,12 +564,13 @@ export default function Home() {
           <div className="mb-8 p-6 bg-yellow-50 border border-yellow-200 rounded-lg">
             <h3 className="text-lg font-semibold text-yellow-800 mb-3">📋 Инструкции</h3>
             <div className="text-yellow-700 space-y-2">
-              <p><strong>1.</strong> Получите API токен в личном кабинете Wildberries в разделе "Настройки" → "Доступ к API"</p>
-              <p><strong>2.</strong> Вставьте токен в поле выше и нажмите "Сохранить" для безопасного хранения</p>
-              <p><strong>3.</strong> Выберите период дат (максимум 30 дней)</p>
-              <p><strong>4.</strong> Нажмите "Скачать Excel отчет" для получения полного отчета в формате Excel</p>
-              <p><strong>5.</strong> Или нажмите "Показать аналитику" для просмотра данных на веб-странице</p>
-              <p className="text-sm mt-3">💡 <strong>Веб-версия включает:</strong> Отчет детализации, Хранение, Приемка, Мои товары, По товарам, По периодам</p>
+              <p><strong>1.</strong> Нажмите "Управление кабинетами" чтобы добавить свои ВБ кабинеты</p>
+              <p><strong>2.</strong> Получите API токен в личном кабинете Wildberries в разделе "Настройки" → "Доступ к API"</p>
+              <p><strong>3.</strong> Добавьте кабинет с названием и токеном для удобного управления</p>
+              <p><strong>4.</strong> Выберите период дат (максимум 30 дней)</p>
+              <p><strong>5.</strong> Нажмите "Скачать Excel отчет" для получения полного отчета в формате Excel</p>
+              <p><strong>6.</strong> Или нажмите "Показать аналитику" для просмотра данных на веб-странице</p>
+              <p className="text-sm mt-3">💡 <strong>Веб-версия включает:</strong> Отчет детализации, Хранение, Приемка, Мои товары, По товарам</p>
             </div>
           </div>
 
