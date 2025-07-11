@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs/promises";
 import * as path from "path";
+// Импортируем обработчик генерации отчета напрямую, чтобы избежать HTTP-запроса к самому себе
+import { POST as generateReport } from "../report/route";
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,46 +40,44 @@ export async function POST(request: NextRequest) {
     console.log(`📅 Период отчета: ${startDate} - ${endDate}`);
     console.log(`🏢 Кабинет: ${cabinetName}`);
 
-    // Вызываем существующий API endpoint для генерации отчета
-    const reportApiUrl = new URL('/api/wildberries/report', request.url);
-    
-    console.log("📊 Вызов API отчетов...");
-    const reportResponse = await fetch(reportApiUrl.toString(), {
+    // Вызываем генератор отчета напрямую без лишнего HTTP-запроса
+    console.log("📊 Генерируем отчет локально…");
+
+    const internalRequestBody = {
+      token,
+      startDate,
+      endDate,
+      costPricesData: {}, // Пустые данные себестоимости для автозагрузки
+    };
+
+    const internalRequest = new NextRequest(new URL('/api/wildberries/report', request.url), {
       method: 'POST',
-      headers: {
+      headers: new Headers({
         'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        token,
-        startDate,
-        endDate,
-        costPricesData: {} // Пустые данные себестоимости для автозагрузки
       }),
+      body: JSON.stringify(internalRequestBody),
     });
 
+    const reportResponse = await generateReport(internalRequest);
+
     if (!reportResponse.ok) {
-      console.error(`❌ Ошибка API отчетов: ${reportResponse.status}`);
-      
+      console.error(`❌ Ошибка генерации отчета: ${reportResponse.status}`);
       let errorData;
       try {
         errorData = await reportResponse.json();
       } catch {
         errorData = { error: `HTTP ${reportResponse.status}` };
       }
-      
+
       return NextResponse.json(
-        { 
-          error: errorData.error || "Ошибка генерации отчета",
-          status: reportResponse.status 
-        },
+        { error: errorData.error || "Ошибка генерации отчета" },
         { status: reportResponse.status }
       );
     }
 
-    // Получаем Excel файл как буфер
-    const reportBuffer = await reportResponse.arrayBuffer();
-    const buffer = Buffer.from(reportBuffer);
-    
+    // Получаем Excel-файл как буфер
+    const buffer = Buffer.from(await reportResponse.arrayBuffer());
+ 
     console.log(`✅ Получен отчет размером: ${(buffer.length / 1024).toFixed(2)} KB`);
 
     // Сохраняем файл на сервер

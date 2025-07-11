@@ -165,29 +165,37 @@ export default function AutoloadPage() {
         })
       })
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+      // Пытаемся извлечь тело ответа независимо от статуса
+      let result: any = {};
+      try {
+        result = await response.json();
+      } catch (e) {
+        // Игнорируем ошибки парсинга JSON
       }
 
-      const result = await response.json()
+      if (!response.ok) {
+        const message = result?.error || `HTTP error! status: ${response.status}`
+        throw new Error(message)
+      }
 
-      if (result.success) {
-        // Успешно загружено
-        const completedPeriods = periods.map(p => 
-          p.id === period.id ? {
-            ...p,
-            status: 'completed' as const,
-            fileName: result.fileName,
-            downloadedAt: new Date().toISOString(),
-            serverPath: result.serverPath,
-            relativePath: result.relativePath,
-            fileExists: true
-          } : p
-        )
-        saveProgress(completedPeriods)
-      } else {
+      // Если success === false также считаем это ошибкой и выводим сообщение
+      if (!result.success) {
         throw new Error(result.error || 'Неизвестная ошибка')
       }
+ 
+      // Успешно загружено
+      const completedPeriods = periods.map(p => 
+        p.id === period.id ? {
+          ...p,
+          status: 'completed' as const,
+          fileName: result.fileName,
+          downloadedAt: new Date().toISOString(),
+          serverPath: result.serverPath,
+          relativePath: result.relativePath,
+          fileExists: true
+        } : p
+      )
+      saveProgress(completedPeriods)
     } catch (error) {
       console.error('Ошибка загрузки отчета:', error)
       
