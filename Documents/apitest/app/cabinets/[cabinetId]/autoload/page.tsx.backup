@@ -1,0 +1,466 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useRouter, useParams } from 'next/navigation'
+
+interface Cabinet {
+  id: string
+  name: string
+  token: string
+  createdAt: string
+}
+
+interface WeekPeriod {
+  id: string
+  start: string
+  end: string
+  status: 'pending' | 'downloading' | 'completed' | 'error'
+  fileName?: string
+  errorMessage?: string
+  downloadedAt?: string
+}
+
+interface AutoloadProgress {
+  cabinetId: string
+  periods: WeekPeriod[]
+  isActive: boolean
+  lastUpdate: string
+}
+
+export default function AutoloadPage() {
+  const router = useRouter()
+  const params = useParams()
+  const cabinetId = params.cabinetId as string
+
+  const [cabinet, setCabinet] = useState<Cabinet | null>(null)
+  const [periods, setPeriods] = useState<WeekPeriod[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [currentPeriod, setCurrentPeriod] = useState<string>('')
+  const [shouldStop, setShouldStop] = useState(false)
+
+  // Загружаем кабинет и прогресс автозагрузки
+  useEffect(() => {
+    const savedCabinets = localStorage.getItem('wb-cabinets')
+    if (savedCabinets) {
+      const cabinets: Cabinet[] = JSON.parse(savedCabinets)
+      const foundCabinet = cabinets.find(c => c.id === cabinetId)
+      if (foundCabinet) {
+        setCabinet(foundCabinet)
+        generateWeeklyPeriods()
+        loadAutoloadProgress()
+      } else {
+        router.push('/cabinets')
+      }
+    } else {
+      router.push('/cabinets')
+    }
+  }, [cabinetId, router])
+
+  // Генерируем еженедельные периоды с января 2025 по сегодня  
+  const generateWeeklyPeriods = () => {
+    const periods: WeekPeriod[] = []
+    
+    // Точно знаем: 30 декабря 2024 = понедельник (первый понедельник который включает январь 2025)
+    const firstMonday = new Date(2024, 11, 30) // 30 декабря 2024
+    
+    const today = new Date()
+    let currentMonday = new Date(firstMonday)
+    let weekNumber = 1
+    
+    // Генерируем периоды от первого понедельника до сегодня
+    while (currentMonday <= today) {
+      // Понедельник (начало недели)
+      const monday = new Date(currentMonday)
+      
+      // Воскресенье (конец недели) = понедельник + 6 дней
+      const sunday = new Date(currentMonday)
+      sunday.setDate(sunday.getDate() + 6)
+      
+      const period: WeekPeriod = {
+        id: `week-${monday.getFullYear()}-${String(weekNumber).padStart(2, '0')}`,
+        start: formatDate(monday),
+        end: formatDate(sunday),
+        status: 'pending'
+      }
+      
+      periods.push(period)
+      
+      // Переходим к следующему понедельнику (+7 дней)
+      currentMonday.setDate(currentMonday.getDate() + 7)
+      weekNumber++
+    }
+    
+    // Сортируем от новых к старым (обратный порядок)
+    periods.reverse()
+    
+    setPeriods(periods)
+  }
+
+  // Форматируем дату в YYYY-MM-DD (локальное время, без смещения UTC)
+  const formatDate = (date: Date): string => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  // Получаем день недели (локальное время) из строки YYYY-MM-DD
+  const getDayOfWeek = (dateStr: string): string => {
+    const [y, m, d] = dateStr.split('-').map(Number)
+    const date = new Date(y, m - 1, d) // создаем дату в локальном времени
+    const days = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']
+    return days[date.getDay()]
+  }
+
+  // Загружаем сохраненный прогресс
+  const loadAutoloadProgress = () => {
+    const savedProgress = localStorage.getItem(`autoload-${cabinetId}`)
+    if (savedProgress) {
+      const progress: AutoloadProgress = JSON.parse(savedProgress)
+      setPeriods(progress.periods)
+    }
+  }
+
+  // Сохраняем прогресс
+  const saveProgress = (updatedPeriods: WeekPeriod[]) => {
+    const progress: AutoloadProgress = {
+      cabinetId,
+      periods: updatedPeriods,
+      isActive: isLoading,
+      lastUpdate: new Date().toISOString()
+    }
+    localStorage.setItem(`autoload-${cabinetId}`, JSON.stringify(progress))
+    setPeriods(updatedPeriods)
+  }
+
+  // Запускаем автозагрузку
+  const startAutoload = async () => {
+    if (!cabinet) return
+
+    setIsLoading(true)
+    setShouldStop(false)
+    const pendingPeriods = periods
+      .filter(p => p.status === 'pending' || p.status === 'error')
+      .filter(p => isPeriodAvailable(p.end)) // Только доступные периоды
+    
+    if (pendingPeriods.length === 0) {
+      alert('Нет доступных для загрузки периодов. Периоды становятся доступны по средам следующей недели.')
+      setIsLoading(false)
+      return
+    }
+
+    for (const period of pendingPeriods) {
+      // Проверяем нужно ли остановить процесс
+      if (shouldStop) {
+        console.log('Автозагрузка остановлена пользователем')
+        break
+      }
+
+      try {
+        setCurrentPeriod(`${period.start} - ${period.end}`)
+        
+        // Обновляем статус на "загружается"
+        const updatedPeriods = periods.map(p => 
+          p.id === period.id 
+            ? { ...p, status: 'downloading' as const }
+            : p
+        )
+        saveProgress(updatedPeriods)
+
+        // Вызываем API для генерации отчета
+        const response = await fetch('/api/wildberries/report', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            token: cabinet.token,
+            startDate: period.start,
+            endDate: period.end,
+          }),
+        })
+
+        if (response.ok) {
+          // Получаем blob и создаем ссылку для скачивания
+          const blob = await response.blob()
+          const fileName = `${cabinet.name}_${period.start}_${period.end}.xlsx`
+          
+          // Автоматически скачиваем файл
+          const url = window.URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = fileName
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          window.URL.revokeObjectURL(url)
+
+          // Обновляем статус на "завершено"
+          const finalPeriods = periods.map(p => 
+            p.id === period.id 
+              ? { 
+                  ...p, 
+                  status: 'completed' as const, 
+                  fileName,
+                  downloadedAt: new Date().toISOString()
+                }
+              : p
+          )
+          saveProgress(finalPeriods)
+
+        } else {
+          const errorData = await response.json()
+          
+          // Обновляем статус на "ошибка"
+          const errorPeriods = periods.map(p => 
+            p.id === period.id 
+              ? { 
+                  ...p, 
+                  status: 'error' as const,
+                  errorMessage: errorData.error || 'Неизвестная ошибка'
+                }
+              : p
+          )
+          saveProgress(errorPeriods)
+        }
+
+        // Небольшая пауза между запросами
+        await new Promise(resolve => setTimeout(resolve, 2000))
+
+      } catch (error) {
+        console.error('Ошибка при загрузке периода:', error)
+        
+        const errorPeriods = periods.map(p => 
+          p.id === period.id 
+            ? { 
+                ...p, 
+                status: 'error' as const,
+                errorMessage: 'Ошибка сети или сервера'
+              }
+            : p
+        )
+        saveProgress(errorPeriods)
+      }
+    }
+
+    setIsLoading(false)
+    setShouldStop(false)
+    setCurrentPeriod('')
+  }
+
+  // Останавливаем автозагрузку
+  const stopAutoload = () => {
+    setShouldStop(true)
+  }
+
+  // Сброс статуса периода
+  const resetPeriod = (periodId: string) => {
+    const updatedPeriods = periods.map(p => 
+      p.id === periodId 
+        ? { ...p, status: 'pending' as const, errorMessage: undefined, fileName: undefined, downloadedAt: undefined }
+        : p
+    )
+    saveProgress(updatedPeriods)
+  }
+
+  // Форматируем дату для отображения
+  const formatDisplayDate = (dateStr: string): string => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('ru-RU', { 
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    })
+  }
+
+  // Проверяем доступен ли период для загрузки
+  const isPeriodAvailable = (endDate: string): boolean => {
+    const end = new Date(endDate)
+    const nextWednesday = new Date(end)
+    nextWednesday.setDate(nextWednesday.getDate() + 3) // +3 дня от воскресенья = среда следующей недели
+    const today = new Date()
+    return today >= nextWednesday
+  }
+
+  // Получаем дату когда период станет доступен
+  const getAvailableDate = (endDate: string): string => {
+    const end = new Date(endDate)
+    const nextWednesday = new Date(end)
+    nextWednesday.setDate(nextWednesday.getDate() + 3)
+    return nextWednesday.toLocaleDateString('ru-RU', { 
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    })
+  }
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'pending': return '⏳'
+      case 'downloading': return '⬇️'
+      case 'completed': return '✅'
+      case 'error': return '❌'
+      default: return '⏳'
+    }
+  }
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'pending': return 'Ожидает'
+      case 'downloading': return 'Загружается'
+      case 'completed': return 'Завершено'
+      case 'error': return 'Ошибка'
+      default: return 'Ожидает'
+    }
+  }
+
+  if (!cabinet) {
+    return <div className="p-8">Загрузка...</div>
+  }
+
+  const completedCount = periods.filter(p => p.status === 'completed').length
+  const errorCount = periods.filter(p => p.status === 'error').length
+  const availablePendingCount = periods.filter(p => (p.status === 'pending' || p.status === 'error') && isPeriodAvailable(p.end)).length
+  const unavailableCount = periods.filter(p => p.status === 'pending' && !isPeriodAvailable(p.end)).length
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-6xl mx-auto px-4">
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Автозагрузка отчетов</h1>
+              <p className="text-gray-600">Кабинет: {cabinet.name}</p>
+            </div>
+            <button
+              onClick={() => router.push('/cabinets')}
+              className="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors"
+            >
+              ← Назад к кабинетам
+            </button>
+          </div>
+
+          {/* Статистика */}
+          <div className="grid grid-cols-5 gap-4 mb-6">
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <div className="text-2xl font-bold text-blue-600">{periods.length}</div>
+              <div className="text-sm text-blue-800">Всего недель</div>
+            </div>
+            <div className="bg-green-50 p-4 rounded-lg">
+              <div className="text-2xl font-bold text-green-600">{completedCount}</div>
+              <div className="text-sm text-green-800">Завершено</div>
+            </div>
+            <div className="bg-yellow-50 p-4 rounded-lg">
+              <div className="text-2xl font-bold text-yellow-600">{availablePendingCount}</div>
+              <div className="text-sm text-yellow-800">Доступно</div>
+            </div>
+            <div className="bg-red-50 p-4 rounded-lg">
+              <div className="text-2xl font-bold text-red-600">{errorCount}</div>
+              <div className="text-sm text-red-800">Ошибки</div>
+            </div>
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <div className="text-2xl font-bold text-gray-600">{unavailableCount}</div>
+              <div className="text-sm text-gray-800">Недоступно</div>
+            </div>
+          </div>
+
+          {/* Управление */}
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+            <div className="flex justify-between items-center">
+              <div>
+                                 <h3 className="font-semibold mb-2">Управление автозагрузкой</h3>
+                 <p className="text-sm text-gray-600 mb-2">
+                   Автоматическая загрузка еженедельных отчетов с января 2025 года по сегодняшний день
+                 </p>
+                 <div className="text-xs text-gray-500 bg-blue-50 p-2 rounded">
+                   ℹ️ <strong>Логика автозагрузки:</strong><br/>
+                   • Периоды: с понедельника по воскресенье<br/>
+                   • Загрузка доступна с среды следующей недели<br/>
+                   • Например: период 7-13 июля станет доступен 16 июля (среда)<br/>
+                   • Загрузка начинается с самых свежих периодов
+                 </div>
+                {isLoading && currentPeriod && (
+                  <p className="text-sm text-blue-600 mt-2">
+                    Загружается период: {currentPeriod}
+                  </p>
+                )}
+              </div>
+                             <div className="flex gap-3">
+                 <button
+                   onClick={startAutoload}
+                   disabled={isLoading || availablePendingCount === 0}
+                   className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                 >
+                   {isLoading ? 'Загружается...' : `Запустить автозагрузку (${availablePendingCount})`}
+                 </button>
+                 {isLoading && (
+                   <button
+                     onClick={stopAutoload}
+                     className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 transition-colors"
+                   >
+                     Остановить
+                   </button>
+                 )}
+               </div>
+            </div>
+          </div>
+
+          {/* Список периодов */}
+          <div className="space-y-2">
+            <h3 className="font-semibold mb-4">Еженедельные периоды ({periods.length})</h3>
+            <div className="max-h-96 overflow-y-auto border rounded-lg">
+                             {periods.map((period) => {
+                 const isAvailable = isPeriodAvailable(period.end)
+                 const isUnavailable = period.status === 'pending' && !isAvailable
+                 
+                 return (
+                   <div key={period.id} className={`p-3 border-b last:border-b-0 flex justify-between items-center ${
+                     period.status === 'downloading' ? 'bg-blue-50' : ''
+                   } ${isUnavailable ? 'opacity-60 bg-gray-50' : ''}`}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">{getStatusIcon(period.status)}</span>
+                    <div>
+                                             <div className="font-medium">
+                         {formatDisplayDate(period.start)} ({getDayOfWeek(period.start)}) - {formatDisplayDate(period.end)} ({getDayOfWeek(period.end)})
+                       </div>
+                                             <div className="text-sm text-gray-600">
+                         Статус: {getStatusText(period.status)}
+                         {period.status === 'pending' && !isPeriodAvailable(period.end) && (
+                           <span className="ml-2 text-orange-600">• Доступно с {getAvailableDate(period.end)}</span>
+                         )}
+                         {period.fileName && (
+                           <span className="ml-2 text-green-600">• {period.fileName}</span>
+                         )}
+                         {period.downloadedAt && (
+                           <span className="ml-2 text-gray-500">
+                             • Загружено: {new Date(period.downloadedAt).toLocaleDateString('ru-RU')}
+                           </span>
+                         )}
+                       </div>
+                      {period.errorMessage && (
+                        <div className="text-sm text-red-600 mt-1">
+                          Ошибка: {period.errorMessage}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    {period.status === 'error' && (
+                      <button
+                        onClick={() => resetPeriod(period.id)}
+                        className="text-sm bg-yellow-500 text-white px-3 py-1 rounded hover:bg-yellow-600"
+                      >
+                        Повторить
+                      </button>
+                    )}
+                                     </div>
+                   </div>
+                 )
+               })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+} 

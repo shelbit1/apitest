@@ -18,7 +18,7 @@ export default function CabinetsPage() {
 
   // Загружаем кабинеты из localStorage
   useEffect(() => {
-    const savedCabinets = localStorage.getItem('wb-cabinets')
+    const savedCabinets = localStorage.getItem('wildberries_cabinets')
     if (savedCabinets) {
       setCabinets(JSON.parse(savedCabinets))
     }
@@ -26,7 +26,7 @@ export default function CabinetsPage() {
 
   // Сохраняем кабинеты в localStorage
   const saveCabinets = (newCabinets: Cabinet[]) => {
-    localStorage.setItem('wb-cabinets', JSON.stringify(newCabinets))
+    localStorage.setItem('wildberries_cabinets', JSON.stringify(newCabinets))
     setCabinets(newCabinets)
   }
 
@@ -150,6 +150,12 @@ export default function CabinetsPage() {
                         className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
                       >
                         Создать отчет
+                      </button>
+                      <button
+                        onClick={() => router.push(`/cabinets/${cabinet.id}/autoload`)}
+                        className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition-colors"
+                      >
+                        Мои отчеты
                       </button>
                       <button
                         onClick={() => deleteCabinet(cabinet.id)}

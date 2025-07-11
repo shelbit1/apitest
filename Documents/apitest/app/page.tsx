@@ -461,8 +461,8 @@ export default function Home() {
                     </p>
                     <p className="text-green-500 text-xs">
                       Добавлен: {new Date(selectedCabinet.createdAt).toLocaleDateString('ru-RU')}
-                    </p>
-                  </div>
+                </p>
+              </div>
                   <button
                     onClick={changeCabinet}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"

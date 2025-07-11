@@ -1,22 +1,23 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  experimental: {
-    // Исправляет проблемы с native dependencies при деплое
+  headers: async () => {
+    return [
+      {
+        source: '/sw.js',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'no-cache, no-store, max-age=0, must-revalidate',
+          },
+          {
+            key: 'Service-Worker-Allowed',
+            value: '/',
+          },
+        ],
+      },
+    ]
   },
-  // Настройки для production деплоя (standalone не нужен для Railway)
-  
-  // Правильное расположение serverExternalPackages
-  serverExternalPackages: ['lightningcss'],
-  
-  // Исправление проблем с webpack и native modules
-  webpack: (config, { isServer }) => {
-    if (isServer) {
-      config.externals.push('lightningcss')
-    }
-    return config
-  }
-};
+}
 
 export default nextConfig;

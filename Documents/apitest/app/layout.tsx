@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
+const geist = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
 });
@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Wildberries Полный Отчет - Экспорт данных",
-  description: "Приложение для получения и экспорта полного отчета Wildberries (реализация + хранение + приемка) в формате Excel",
+  title: "Wildberries Отчеты",
+  description: "Автоматическая генерация и загрузка отчетов Wildberries",
 };
 
 export default function RootLayout({
@@ -23,9 +23,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="ru">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geist.variable} ${geistMono.variable} antialiased`}
       >
         {children}
       </body>

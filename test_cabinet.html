@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Создание тестового кабинета</title>
+</head>
+<body>
+<script>
+// Создаём тестовый кабинет для проверки автозагрузки
+const testCabinet = {
+  id: '1752176832916',
+  name: 'Тестовый Кабинет',
+  token: 'test-token-12345',
+  createdAt: new Date().toISOString()
+};
+
+const cabinets = [testCabinet];
+localStorage.setItem('wb-cabinets', JSON.stringify(cabinets));
+
+console.log('Тестовый кабинет создан:', testCabinet);
+document.body.innerHTML = '<h1>✅ Тестовый кабинет создан!</h1><p>ID: ' + testCabinet.id + '</p><p>Название: ' + testCabinet.name + '</p>';
+</script>
+</body>
+</html>
