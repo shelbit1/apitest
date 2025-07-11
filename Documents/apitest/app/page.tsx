@@ -3,23 +3,6 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-// Интерфейсы для всех данных
-interface AllWebData {
-  "Отчет детализации": any[];
-  "Хранение": any[];
-  "Приемка": any[];
-  "Мои товары": any[];
-  "По товарам": any[];
-  "По периодам": {
-    [key: string]: {
-      value: number | string;
-      formula?: string;
-      comment?: string;
-      percent?: number;
-    };
-  };
-}
-
 interface Cabinet {
   id: string;
   name: string;
@@ -33,10 +16,6 @@ export default function Home() {
   const [endDate, setEndDate] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [savedToken, setSavedToken] = useState("");
-  const [showWebData, setShowWebData] = useState(false);
-  const [webData, setWebData] = useState<AllWebData | null>(null);
-  const [isLoadingWebData, setIsLoadingWebData] = useState(false);
-  const [activeSheet, setActiveSheet] = useState<string>("По периодам");
   const [googleSheetsLink, setGoogleSheetsLink] = useState("");
   const [selectedCabinet, setSelectedCabinet] = useState<Cabinet | null>(null);
   const router = useRouter();
@@ -194,254 +173,14 @@ export default function Home() {
     }
   };
 
-  // Получение данных для веб-версии
-  const handleShowWebData = async () => {
-    if (!selectedCabinet) {
-      alert("Выберите ВБ кабинет для просмотра аналитики");
-      return;
-    }
-    
-    if (!startDate || !endDate) {
-      alert("Выберите период дат");
-      return;
-    }
-
-    if (new Date(startDate) > new Date(endDate)) {
-      alert("Дата начала не может быть больше даты окончания");
-      return;
-    }
-
-    try {
-      console.log("🔍 Начинаем получение данных для веб-версии...");
-      console.log("📅 Период:", { startDate, endDate });
-      console.log("🔐 Кабинет:", selectedCabinet.name);
-      
-      setIsLoadingWebData(true);
-      setWebData(null);
-      setShowWebData(false);
-      
-      const response = await fetch('/api/wildberries/periods', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          token: selectedCabinet.token,
-          startDate,
-          endDate
-        })
-      });
-
-      console.log("📡 Ответ от сервера:", response.status);
-      
-      if (!response.ok) {
-        // Получаем детальную информацию об ошибке
-        let errorData;
-        try {
-          errorData = await response.json();
-        } catch (e) {
-          errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
-        }
-        
-        console.error("❌ Ошибка от сервера:", errorData);
-        
-        // Формируем подробное сообщение об ошибке
-        let errorMessage = errorData.error || `Ошибка API: ${response.status}`;
-        if (errorData.help) {
-          errorMessage += `\n\n💡 Решение: ${errorData.help}`;
-        }
-        if (errorData.details) {
-          errorMessage += `\n\n📄 Детали: ${errorData.details}`;
-        }
-        
-        throw new Error(errorMessage);
-      }
-
-      const data = await response.json();
-      console.log("📊 Полученные данные:", data);
-      
-      setWebData(data);
-      setShowWebData(true);
-      
-    } catch (error) {
-      console.error("❌ Ошибка при получении данных веб-версии:", error);
-      alert(`Ошибка при получении данных: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`);
-    } finally {
-      setIsLoadingWebData(false);
-    }
-  };
-
   // Переход на страницу себестоимости
   const handleUploadCostPrice = () => {
     window.location.href = '/cost-price';
   };
 
-  // Функция отображения данных "По периодам"
-  const renderPeriodsData = (data: any) => {
-    const sections = [
-      {
-        title: "Поставки клиентов",
-        color: "bg-blue-100",
-        borderColor: "border-blue-300",
-        textColor: "text-blue-800",
-        items: ["Доставки", "Отказы без возвратов", "Итого поставок клиентам"]
-      },
-      {
-        title: "Показатели за период",
-        color: "bg-orange-100", 
-        borderColor: "border-orange-300",
-        textColor: "text-orange-800",
-        items: ["Продажи", "Возвраты", "Итого кол-во реализованного товара", "Продажи + корректировки", "Корректировки", "Заказано товаров", "Корректировки в перечислении за товар шт"]
-      },
-      {
-        title: "Движение товара в рублях по цене продавца с учетом согласованной скидки (до СПП)",
-        color: "bg-blue-100",
-        borderColor: "border-blue-300", 
-        textColor: "text-blue-800",
-        items: ["Продажи до СПП", "Возвраты до СПП", "Корректировка в продажах до СПП", "Вся стоимость реализованного товара до СПП", "Вся стоимость до СПП", "Средний чек продажи до СПП", "% комиссии ВБ до СПП"]
-      },
-      {
-        title: "Движение товара в рублях по цене с учетом скидки постоянного покупателя (после СПП)",
-        color: "bg-orange-100",
-        borderColor: "border-orange-300",
-        textColor: "text-orange-800",
-        items: ["Продажи после СПП", "Возвраты после СП", "Корректировка в продажах после СПП", "Вся стоимость реализованного товара после СПП", "Вся стоимость после СПП", "Средний чек продажи после СП", "Сумма СПП", "% СПП"]
-      },
-      {
-        title: "К перечислению за товар",
-        color: "bg-orange-100",
-        borderColor: "border-orange-300",
-        textColor: "text-orange-800",
-        items: ["Корректировки в перечислении за товар", "Продажи фактические (цена продажи - комиссия ВБ)", "Возвраты полученный по факту за возврат по формуле (Цена продажи - комиссия ВБ)", "К перечислению за товар"]
-      },
-      {
-        title: "Статьи удержаний Вайлдберриз",
-        color: "bg-purple-100",
-        borderColor: "border-purple-300", 
-        textColor: "text-purple-800",
-        items: ["Плановая комиссия", "Фактическая комиссия", "Стоимость логистики", "Логистика на единицу товар", "% логистики от реализациии до СПП", "Штрафы", "Доплаты", "Хранение", "% хранения от реализациии до СПП", "Платная приемка", "Реклама баланс + счет", "% ДРР (доля рекламных расходов) от реализациии до СПП (на единицу)", "% ДРР (доля рекламных расходов) от реализациии до СПП", "ИМИЗР (использование механик искуственного завышения рейтинга)", "Отзывы", "Кредит", "Тело кредита", "Процент кредита", "% кредита от реализациии до СПП", "Прочие удержания", "% прочих удержаний от реализациии до СПП", "Итого стоимость всех услуг ВБ от реализации до СПП", "% всех услуг ВБ от реализации до СПП", "% всех услуг ВБ от реализации после СПП"]
-      },
-      {
-        title: "Перечисления, проверка расчетов",
-        color: "bg-green-100",
-        borderColor: "border-green-300",
-        textColor: "text-green-800",
-        items: ["ИТОГО к выплате", "Итого к оплате на единицу товара"]
-      }
-    ];
-
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse border border-gray-300">
-          <thead>
-            <tr className="bg-gray-50">
-              <th className="border border-gray-300 px-4 py-2 text-left font-semibold">Наименование</th>
-              <th className="border border-gray-300 px-4 py-2 text-right font-semibold">Значение</th>
-              <th className="border border-gray-300 px-4 py-2 text-right font-semibold">%</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sections.map((section, sectionIndex) => (
-              <React.Fragment key={sectionIndex}>
-                <tr>
-                  <td colSpan={3} className={`${section.color} ${section.borderColor} ${section.textColor} border px-4 py-2 font-bold text-center`}>
-                    {section.title}
-                  </td>
-                </tr>
-                {section.items.map((itemKey, itemIndex) => {
-                  const item = data[itemKey];
-                  if (!item) return null;
-                  
-                  const value = typeof item.value === 'number' ? 
-                    (item.value === 0 ? item.value : item.value.toLocaleString('ru-RU')) : 
-                    item.value;
-                  
-                  const isZero = typeof item.value === 'number' && item.value === 0;
-                  const percent = item.percent !== undefined ? 
-                    `${(item.percent * 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%` : 
-                    '';
-                  
-                  return (
-                    <tr key={itemIndex}>
-                      <td className="border border-gray-300 px-4 py-2">{itemKey}</td>
-                      <td className={`border border-gray-300 px-4 py-2 text-right ${isZero ? 'text-red-600 font-semibold' : ''}`}>
-                        {value}
-                      </td>
-                      <td className="border border-gray-300 px-4 py-2 text-right">{percent}</td>
-                    </tr>
-                  );
-                })}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
-
-  // Функция отображения данных в виде таблицы
-  const renderTableData = (data: any[], title: string) => {
-    if (!data || data.length === 0) {
-      return (
-        <div className="text-center py-8 text-gray-500">
-          Нет данных для отображения
-        </div>
-      );
-    }
-
-    // Собираем все уникальные ключи из первых 50 строк (или меньше)
-    const maxRowsForHeaders = 50;
-    const headerSet: Set<string> = new Set();
-    data.slice(0, maxRowsForHeaders).forEach((row) => {
-      Object.keys(row).forEach((key) => headerSet.add(key));
-    });
-    const headers = Array.from(headerSet);
-    
-    return (
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse border border-gray-300">
-          <thead>
-            <tr className="bg-gray-50">
-              {headers.map((header, index) => (
-                <th key={index} className="border border-gray-300 px-4 py-2 text-left font-semibold">
-                  {header}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.slice(0, 100).map((row, rowIndex) => (
-              <tr key={rowIndex} className={rowIndex % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                {headers.map((header, cellIndex) => (
-                  <td key={cellIndex} className="border border-gray-300 px-4 py-2">
-                    {row[header] !== undefined ? row[header] : ''}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {data.length > 100 && (
-          <div className="text-center py-4 text-gray-600">
-            Показано первые 100 записей из {data.length}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  const sheetTabs = [
-    "Отчет детализации",
-    "Хранение", 
-    "Приемка",
-    "Мои товары",
-    "По товарам",
-    "По периодам"
-  ];
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
-      <div className={`mx-auto transition-all duration-300 ${showWebData ? 'max-w-7xl' : 'max-w-2xl'}`}>
+      <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-lg shadow-lg p-8">
           <h1 className="text-3xl font-bold text-gray-800 mb-8 text-center">
             📊 Wildberries Полный Отчет
@@ -522,7 +261,7 @@ export default function Home() {
             <div className="flex flex-col sm:flex-row gap-4">
               <button
                 onClick={handleDownloadReport}
-                disabled={isLoading}
+                disabled={isLoading || !selectedCabinet}
                 className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-2"
               >
                 {isLoading ? (
@@ -532,21 +271,6 @@ export default function Home() {
                   </>
                 ) : (
                   <>📥 Скачать Excel отчет</>
-                )}
-              </button>
-              
-              <button
-                onClick={handleShowWebData}
-                disabled={isLoadingWebData}
-                className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 transition-colors flex items-center justify-center gap-2"
-              >
-                {isLoadingWebData ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                    Загрузка данных...
-                  </>
-                ) : (
-                  <>📊 Показать аналитику</>
                 )}
               </button>
 
@@ -569,55 +293,9 @@ export default function Home() {
               <p><strong>3.</strong> Добавьте кабинет с названием и токеном для удобного управления</p>
               <p><strong>4.</strong> Выберите период дат (максимум 30 дней)</p>
               <p><strong>5.</strong> Нажмите "Скачать Excel отчет" для получения полного отчета в формате Excel</p>
-              <p><strong>6.</strong> Или нажмите "Показать аналитику" для просмотра данных на веб-странице</p>
-              <p className="text-sm mt-3">💡 <strong>Веб-версия включает:</strong> Отчет детализации, Хранение, Приемка, Мои товары, По товарам</p>
+              <p><strong>6.</strong> Или нажмите "Загрузить себестоимость" для настройки цен</p>
             </div>
           </div>
-
-          {/* Веб-данные */}
-          {showWebData && webData && (
-            <div className="border-t pt-8">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-gray-800">📊 Веб-версия аналитики</h2>
-                <button
-                  onClick={() => setShowWebData(false)}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
-                >
-                  ✕ Скрыть
-                </button>
-              </div>
-
-              {/* Табы */}
-              <div className="mb-6 border-b border-gray-200">
-                <div className="flex flex-wrap gap-1">
-                  {sheetTabs.map((sheet) => (
-                    <button
-                      key={sheet}
-                      onClick={() => setActiveSheet(sheet)}
-                      className={`px-4 py-2 font-medium rounded-t-lg transition-colors ${
-                        activeSheet === sheet
-                          ? 'bg-blue-600 text-white border-b-2 border-blue-600'
-                          : 'text-gray-600 hover:text-blue-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      {sheet}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Содержимое активного листа */}
-              <div className="bg-gray-50 rounded-lg p-6">
-                <h3 className="text-lg font-semibold mb-4">{activeSheet}</h3>
-                
-                {activeSheet === "По периодам" ? (
-                  renderPeriodsData(webData["По периодам"])
-                ) : (
-                  renderTableData(webData[activeSheet as keyof AllWebData] as any[], activeSheet)
-                )}
-              </div>
-            </div>
-          )}
 
           {/* Блок BASIO */}
           <div className="mt-8 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
