@@ -305,24 +305,21 @@ function addFullReportSheet(workbook: XLSX.WorkBook, data: any[]) {
     }
     
     fullReportData.push({
-      "ID отчета реализации": `=== ОТЧЕТ РЕАЛИЗАЦИИ ID: ${reportId} ===`,
-      "Дата создания отчета": group[0]?.create_dt || '',
-      "Период с": group[0]?.date_from || '',
-      "Период по": group[0]?.date_to || '',
+      "Номер отчёта": `=== ОТЧЕТ РЕАЛИЗАЦИИ ID: ${reportId} ===`,
+      "Дата начала отчётного периода": group[0]?.date_from || '',
+      "Дата конца отчётного периода": group[0]?.date_to || '',
+      "Дата формирования отчёта": group[0]?.create_dt || '',
       "Количество записей": group.length,
       "Валюта": group[0]?.currency_name || ''
     });
     
-    // Добавляем пустую строку после заголовка
-    fullReportData.push({});
-    
     // Добавляем все записи из этой группы
     group.forEach(item => {
       fullReportData.push({
-        "ID отчета реализации": item.realizationreport_id || "",
-        "Дата создания отчета": item.create_dt || "",
-        "Период с": item.date_from || "",
-        "Период по": item.date_to || "",
+        "Номер отчёта": item.realizationreport_id || "",
+        "Дата начала отчётного периода": item.date_from || "",
+        "Дата конца отчётного периода": item.date_to || "",
+        "Дата формирования отчёта": item.create_dt || "",
         "Валюта": item.currency_name || "",
         "Код договора поставщика": item.suppliercontract_code || "",
         "ID записи": item.rrd_id || "",
@@ -915,7 +912,7 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     const costPriceExcelData = costPriceData.map((item) => ({
       "Артикул ВБ": item.nmID || "",
       "Артикул продавца": item.vendorCode || "",
-      "Товар": item.object || "",
+      "Предмет": item.object || "",
       "Бренд": item.brand || "",
       "Размер": item.sizeName || "",
       "Штрихкод": item.barcode || "",
@@ -934,7 +931,7 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     const costPriceColumnWidths = [
       { wch: 15 }, // Артикул ВБ
       { wch: 20 }, // Артикул продавца
-      { wch: 35 }, // Товар
+      { wch: 35 }, // Предмет
       { wch: 15 }, // Бренд
       { wch: 15 }, // Размер
       { wch: 15 }, // Штрихкод
@@ -1774,6 +1771,31 @@ async function getCostPriceData(token: string, savedCostPrices: {[key: string]: 
       console.warn('⚠️ Ошибка при получении карточек из API контента:', error);
     }
 
+    // Получаем данные о хранении для получения предметов
+    let storageData: any[] = [];
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      storageData = await getStorageData(token, today, today);
+      console.log(`📦 Получено данных хранения: ${storageData.length} записей`);
+    } catch (error) {
+      console.warn('⚠️ Не удалось получить данные хранения:', error);
+    }
+
+    // Создаем карту предметов из данных хранения
+    const subjectMap = new Map<string, string>();
+    storageData.forEach((item: any) => {
+      const nmId = item.nmId?.toString() || '';
+      const vendorCode = item.vendorCode || '';
+      const subject = item.subject || '';
+      
+      if (subject && nmId) {
+        subjectMap.set(nmId, subject);
+      }
+      if (subject && vendorCode) {
+        subjectMap.set(vendorCode, subject);
+      }
+    });
+
     // Создаем карту существующих карточек для быстрого поиска
     const cardsMap = new Map<string, any>();
     cards.forEach((card: any) => {
@@ -1783,10 +1805,17 @@ async function getCostPriceData(token: string, savedCostPrices: {[key: string]: 
 
     // Шаг 2: Преобразуем карточки в данные себестоимости
     cards.forEach((card: any) => {
+      const nmId = card.nmID?.toString() || '';
+      const vendorCode = card.vendorCode || '';
+      
+      // Получаем предмет из разных источников
+      const subject = card.object || card.subjectName || 
+                     subjectMap.get(nmId) || subjectMap.get(vendorCode) || '';
+      
       const baseProduct = {
         nmID: card.nmID,
         vendorCode: card.vendorCode,
-        object: card.object || '',
+        object: subject,
         brand: card.brand || '',
         createdAt: card.createdAt || '',
         updatedAt: card.updatedAt || ''
@@ -1866,10 +1895,13 @@ async function getCostPriceData(token: string, savedCostPrices: {[key: string]: 
           const costKey = `${nmId}-${barcode}`;
           const savedCostPrice = savedCostPrices[costKey] ? parseFloat(savedCostPrices[costKey]) : 0;
           
+          // Получаем предмет из карты субъектов или используем артикул как fallback
+          const subject = subjectMap.get(nmId) || subjectMap.get(vendorCode) || vendorCode;
+          
           missingProducts.set(uniqueKey, {
             nmID: nmId,
             vendorCode: vendorCode,
-            object: vendorCode, // Используем артикул как название, поскольку данных нет
+            object: subject,
             brand: 'Неизвестный бренд',
             sizeName: 'Размер не указан',
             barcode: barcode,
