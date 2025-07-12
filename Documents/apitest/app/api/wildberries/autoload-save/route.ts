@@ -4,6 +4,10 @@ import * as path from "path";
 // Импортируем обработчик генерации отчета напрямую, чтобы избежать HTTP-запроса к самому себе
 import { POST as generateReport } from "../report/route";
 
+// Увеличиваем таймаут выполнения до 10 минут для автозагрузки
+export const runtime = 'nodejs';
+export const maxDuration = 600; // 10 минут
+
 export async function POST(request: NextRequest) {
   try {
     console.log("🚀 Начало автозагрузки отчета с сохранением на сервер");
@@ -40,7 +44,7 @@ export async function POST(request: NextRequest) {
     console.log(`📅 Период отчета: ${startDate} - ${endDate}`);
     console.log(`🏢 Кабинет: ${cabinetName}`);
 
-    // Вызываем генератор отчета напрямую без лишнего HTTP-запроса
+    // Вызываем генератор отчета с таймаутом
     console.log("📊 Генерируем отчет локально…");
 
     const internalRequestBody = {
@@ -58,7 +62,13 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(internalRequestBody),
     });
 
-    const reportResponse = await generateReport(internalRequest);
+    // Добавляем таймаут в 5 минут для генерации отчета
+    const reportResponse = await Promise.race([
+      generateReport(internalRequest),
+      new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('Таймаут генерации отчета (5 минут)')), 5 * 60 * 1000)
+      )
+    ]);
 
     if (!reportResponse.ok) {
       console.error(`❌ Ошибка генерации отчета: ${reportResponse.status}`);

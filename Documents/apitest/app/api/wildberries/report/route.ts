@@ -6,6 +6,10 @@ import { createExcelReport as createExcelReportFromLib } from "../../../lib/exce
 import { addDays, formatDate, mapCampaignType, mapCampaignStatus } from "../../../lib/data-mappers";
 import * as path from "path";
 
+// Увеличиваем таймаут выполнения до 10 минут для генерации отчетов
+export const runtime = 'nodejs';
+export const maxDuration = 600; // 10 минут
+
 // Интерфейсы для рекламных кампаний
 interface Campaign {
   advertId: number;

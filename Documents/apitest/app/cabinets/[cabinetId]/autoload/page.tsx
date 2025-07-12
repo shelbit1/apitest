@@ -153,6 +153,10 @@ export default function AutoloadPage() {
     saveProgress(updatedPeriods)
 
     try {
+      // Добавляем таймаут для запроса (6 минут)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6 * 60 * 1000);
+
       const response = await fetch('/api/wildberries/autoload-save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -162,25 +166,28 @@ export default function AutoloadPage() {
           startDate: period.start,
           endDate: period.end,
           cabinetName: cabinet.name
-        })
+        }),
+        signal: controller.signal
       })
+
+      clearTimeout(timeoutId);
 
       // Пытаемся извлечь тело ответа независимо от статуса
       let result: any = {};
       try {
         result = await response.json();
       } catch (e) {
-        // Игнорируем ошибки парсинга JSON
+        console.error('Ошибка парсинга JSON:', e);
       }
 
       if (!response.ok) {
-        const message = result?.error || `HTTP error! status: ${response.status}`
+        const message = result?.error || `Ошибка сервера: ${response.status} ${response.statusText}`
         throw new Error(message)
       }
 
       // Если success === false также считаем это ошибкой и выводим сообщение
       if (!result.success) {
-        throw new Error(result.error || 'Неизвестная ошибка')
+        throw new Error(result.error || 'Неизвестная ошибка сервера')
       }
  
       // Успешно загружено
@@ -199,12 +206,31 @@ export default function AutoloadPage() {
     } catch (error) {
       console.error('Ошибка загрузки отчета:', error)
       
+      // Определяем тип ошибки и формируем понятное сообщение
+      let errorMessage = 'Неизвестная ошибка'
+      
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          errorMessage = 'Превышено время ожидания (6 минут). Попробуйте позже.'
+        } else if (error.message.includes('Failed to fetch')) {
+          errorMessage = 'Сетевая ошибка. Проверьте подключение к интернету.'
+        } else if (error.message.includes('terminated')) {
+          errorMessage = 'Процесс был прерван сервером. Попробуйте позже.'
+        } else if (error.message.includes('401')) {
+          errorMessage = 'Неверный токен API. Проверьте токен в настройках кабинета.'
+        } else if (error.message.includes('429')) {
+          errorMessage = 'Превышен лимит запросов API. Попробуйте через несколько минут.'
+        } else {
+          errorMessage = error.message
+        }
+      }
+      
       // Обновляем статус на "error"
       const errorPeriods = periods.map(p => 
         p.id === period.id ? {
           ...p,
           status: 'error' as const,
-          errorMessage: error instanceof Error ? error.message : 'Неизвестная ошибка'
+          errorMessage
         } : p
       )
       saveProgress(errorPeriods)
