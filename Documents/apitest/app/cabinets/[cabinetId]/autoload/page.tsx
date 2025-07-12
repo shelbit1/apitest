@@ -407,14 +407,27 @@ export default function AutoloadPage() {
                             ❌ Недоступен
                           </button>
                         ) : (
-                          <a 
-                            href={period.relativePath ? `/reports/${period.relativePath}` : `/reports/${period.fileName}`} 
-                            download={period.fileName}
-                          >
-                            <button className="bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600 font-medium flex items-center gap-1">
-                              📥 Скачать
+                          <div className="flex gap-2">
+                            <a 
+                              href={period.relativePath ? `/reports/${period.relativePath}` : `/reports/${period.fileName}`} 
+                              download={period.fileName}
+                            >
+                              <button className="bg-green-500 text-white px-3 py-1 rounded text-sm hover:bg-green-600 font-medium flex items-center gap-1">
+                                📥 Скачать
+                              </button>
+                            </a>
+                            <button
+                              onClick={() => loadSingleReport(period)}
+                              disabled={isLoading}
+                              className={`px-3 py-1 rounded text-sm font-medium flex items-center gap-1 ${
+                                isLoading 
+                                  ? 'bg-blue-400 text-white cursor-not-allowed' 
+                                  : 'bg-orange-500 text-white hover:bg-orange-600'
+                              }`}
+                            >
+                              {isLoading ? '⏳ Загружается...' : '🔄 Перезагрузить'}
                             </button>
-                          </a>
+                          </div>
                         )
                       )}
                       
