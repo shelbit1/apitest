@@ -872,10 +872,15 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
       "Дата создания поставки": item.giCreateDate || "",
       "Номер поставки": item.incomeId || "",
       "Артикул WB": item.nmID || "",
+      "Артикул продавца": item.vendorCode || "",
+      "Баркод": item.barcode || "",
       "Дата приёмки": item.shkCreateDate || "",
       "Предмет": item.subjectName || "",
       "Количество товаров, шт.": item.count || 0,
       "Суммарная стоимость приёмки, ₽": item.total || 0,
+      "Цена за единицу": item.count > 0 ? (item.total / item.count).toFixed(2) : 0,
+      "Склад": item.warehouseName || "",
+      "Статус": item.status || "",
     }));
     
     const acceptanceSheet = XLSX.utils.json_to_sheet(acceptanceExcelData);
@@ -884,11 +889,16 @@ async function createExcelReport(data: any[], storageData: any[], acceptanceData
     const acceptanceColumnWidths = [
       { wch: 20 }, // Дата создания поставки
       { wch: 15 }, // Номер поставки
-      { wch: 20 }, // Артикул WB
+      { wch: 15 }, // Артикул WB
+      { wch: 20 }, // Артикул продавца
+      { wch: 15 }, // Баркод
       { wch: 15 }, // Дата приёмки
       { wch: 25 }, // Предмет
       { wch: 20 }, // Количество товаров
       { wch: 25 }, // Суммарная стоимость приёмки
+      { wch: 15 }, // Цена за единицу
+      { wch: 15 }, // Склад
+      { wch: 15 }, // Статус
     ];
     acceptanceSheet['!cols'] = acceptanceColumnWidths;
     
